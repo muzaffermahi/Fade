@@ -4,23 +4,31 @@
 
 Fade is a small, local terminal experiment in human authorship. The main conversation is with a thoughtful Companion, not a task dispatcher. Your writing becomes evidence-backed Living Intent. A separate Pi Builder implements bounded slices from fixed snapshots of that intent. Future slices can begin automatically when sufficiently clear.
 
-This is an independent project in the requested `Veto2` folder. It does not reuse or modify the older parent repository. The product and GitHub repository are named **Fade**.
+This is an independent project in the `Fade` folder. It does not reuse or modify the older parent repository. The product, terminal command, and GitHub repository are named **Fade**.
 
 ## Install and run
 
 Node 22 or newer is required. Node 24 was used for development. Pi's bash tool needs Bash; on Windows install Git for Windows and make its Bash available on PATH.
 
 ```powershell
-cd C:\Users\LENOVO\Documents\ChatGPT\Apple-of-my-ai\Veto2
+cd C:\Users\LENOVO\Documents\ChatGPT\Apple-of-my-ai\Fade
 npm ci
 node node_modules/typescript/bin/tsc -p tsconfig.json
-node dist/cli.js --workspace .\projects\my-notebook
+npm link --ignore-scripts
 ```
+
+Then open a terminal in the folder where you want to create software and run:
+
+```powershell
+Fade
+```
+
+Like `pi`, the command is available outside the installation folder. The current directory is the workspace by default, and running `Fade` there again recovers its state. `Fade --help` shows the controls. On Windows the command is case-insensitive, so `fade` also works. You can explicitly select a workspace with `Fade --workspace <directory>`.
 
 Write your idea at the prompt. Pi starts the foundation while the Companion explores what matters to you. `/write` opens a multiline composition mode; `/send` submits it. `/cancel` retains the draft. You can also set `FADE_EDITOR` to an editor executable (such as `notepad.exe`) and use `/editor`.
 
 ```powershell
-node dist/cli.js --workspace .\projects\my-notebook --idea "Build a calm notebook for unfinished thoughts"
+Fade --workspace .\projects\my-notebook --idea "Build a calm notebook for unfinished thoughts"
 ```
 
 Restart with the **same workspace** to recover its conversation, intent, decisions, discoveries, slice results, and Pi session references. It opens paused; `/resume` continues. Interrupted work is retried using a new current intent snapshot, with existing code preserved. Use a dedicated workspace for projects you authorize Pi to modify.
@@ -32,7 +40,7 @@ Fade uses Pi's existing `~/.pi/agent/auth.json` and `models.json`. Both roles de
 Builder and Companion models can be configured independently:
 
 ```powershell
-node dist/cli.js --workspace .\projects\notes --builder opencode-go/deepseek-v4.1-flash --companion opencode-go/deepseek-v4.1-flash
+Fade --workspace .\projects\notes --builder opencode-go/deepseek-v4.1-flash --companion opencode-go/deepseek-v4.1-flash
 ```
 
 Alternatively set `FADE_BUILDER_MODEL` and `FADE_COMPANION_MODEL` to `provider/model-id`. The model must support structured JSON; the Builder also needs reliable tool calling. The pinned Pi catalog predates V4.1 Flash, so Fade adds that official model ID using the existing Go OpenAI-compatible transport and conservative catalog limits. Every Go session sends its own `x-opencode-session` header. Neither compatibility adjustment rewrites your Pi configuration. [Official OpenCode Go model documentation](https://opencode.ai/docs/go/).

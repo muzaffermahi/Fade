@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "bin": { "Fade": "dist/cli.js" },
   "description": "Fade: a terminal tool for the mind. Think with a Companion while Pi builds.",
   "engines": { "node": ">=22" },
   "scripts": {

@@ -3,6 +3,7 @@
 | Work order | Status | Command summary |
 | --- | --- | --- |
 | FADE-MVP — standalone terminal experiment from the human's build brief | passed | Strict TypeScript checks and production build exit 0; 14 automated tests pass; real Pi/OpenCode Go DeepSeek V4.1 Flash A → B transition passes; six generated notebook tests independently pass. |
+| FADE-INSTALL — consistent naming and global terminal command | passed | Folder renamed to Fade; npm global link installed; Fade --help and launch/quit from an unrelated directory exit 0; current directory becomes the workspace; strict TypeScript, production build and all 14 tests pass. |
 
 Verified on 2026-10-10 (Asia/Shanghai), Node 24.14.1, Windows, Pi SDK 0.73.1. Existing parent repository files and statuses were preserved.
 
@@ -26,3 +27,7 @@ Earlier exploratory tests exposed malformed output from a local model and an Ope
 ## Remaining limitations
 
 No blocker remains for the terminal MVP. Companion interpretation still needs human use to assess its quality; quoted evidence does not guarantee semantic fidelity. The Companion buffers structured replies rather than streaming prose. Shell execution is trusted local execution, not an OS sandbox. The deprecated requested SDK has unresolved upstream advisories. No web UI, cloud sync, alternate coding harness, or production deployment was added.
+
+## Terminal installation
+
+The source folder is `C:\Users\LENOVO\Documents\ChatGPT\Apple-of-my-ai\Fade`. `npm link --ignore-scripts --no-audit --no-fund` installed the `Fade` command into the existing npm global bin directory on PATH. `Get-Command Fade` resolves its PowerShell, cmd and shell shims. `Fade --help` ran from the user home directory; piping `/quit` into `Fade` from a fresh temporary directory opened that directory as the workspace and removed its lock on exit. No environment PATH edits were needed. Current source, documentation and built output contain no retired folder-name references.

@@ -27,7 +27,8 @@ Write to the Companion while Pi builds. No minimum length, no tickets.
   /allow <id> /deny <id> Consent to a specific nonroutine shell command
   /quit                Save and leave
 
-Launch: npm start -- --workspace <directory> [--idea "your idea"]
+Launch: Fade [--workspace <directory>] [--idea "your idea"]
+The current directory is your workspace by default. Launch there again to resume.
 Models: --builder provider/model --companion provider/model
 Only local trusted code should be executed. Pi shell commands and generated code
 run with your OS permissions; Fade's path guards are not a shell sandbox.
@@ -42,7 +43,7 @@ function flag(name: string): string | undefined {
 }
 async function main(): Promise<void> {
   if (process.argv.includes('--help')) { console.log(HELP); return; }
-  const workspace = resolve(flag('--workspace') ?? join('projects', randomUUID()));
+  const workspace = resolve(flag('--workspace') ?? process.cwd());
   const initialIdea = flag('--idea');
   const builder = flag('--builder') ?? process.env.FADE_BUILDER_MODEL;
   const companion = flag('--companion') ?? process.env.FADE_COMPANION_MODEL;

@@ -1,6 +1,6 @@
 # Fade implementation contract
 
-This independent project was authorized by the human's new build brief. Its product name and public GitHub repository are **Fade**; the folder remains `Veto2` as requested. The older parent project's v0.2 work orders and serialized contracts do not define this new experiment. Preserve all parent files.
+This independent project was authorized by the human's new build brief. Its product name, folder, terminal command, and public GitHub repository are **Fade**. The older parent project's v0.2 work orders and serialized contracts do not define this new experiment. Preserve all parent files.
 
 Fade is a tool for the mind. The Builder implements the present; the Companion helps the human develop the future. Do not turn the human into an agent supervisor or add routine approvals.
 
