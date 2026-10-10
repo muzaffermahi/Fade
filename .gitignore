@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.fade/
+projects/
+.env
+*.log
+coverage/
