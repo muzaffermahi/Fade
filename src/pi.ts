@@ -1,26 +1,24 @@
-import { mkdir, readFile, writeFile, access } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { createAgentSession, DefaultResourceLoader, AuthStorage, ModelRegistry, SettingsManager,
-  SessionManager, getAgentDir, createReadToolDefinition, createWriteToolDefinition,
-  createEditToolDefinition, createBashToolDefinition, createLocalBashOperations, defineTool, type AgentSession } from '@mariozechner/pi-coding-agent';
-import { BuilderSchema, CompanionSchema, parseResponse, type ProjectState, type Slice } from './contracts.js';
-import type { TSchema, Static } from '@sinclair/typebox';
+import { createAgentSession, createAgentSessionServices, createAgentSessionFromServices, ModelRuntime, SettingsManager,
+  SessionManager, getAgentDir, type AgentSession } from '@earendil-works/pi-coding-agent';
+import { BuilderSchema, CompanionSchema, parseResponse, type ProjectState, type Slice, type BuilderMessage } from './contracts.js';
+import type { TSchema, Static } from 'typebox';
 import type { Agents } from './coordinator.js';
 import { Store } from './store.js';
 import { BUILDER_PROMPT, COMPANION_PROMPT } from './prompts.js';
-import { routineCommand, workspacePath } from './workspace.js';
+import { piBuiltins } from './pi-resources.js';
 
 export interface PiOptions {
   builderModel?: string; companionModel?: string;
   companionThinkingLevel?: NonNullable<Parameters<typeof createAgentSession>[0]>['thinkingLevel'];
-  approve?: (command: string, signal: AbortSignal | undefined) => Promise<boolean>;
 }
 /** Shared model selection for the native UI and the two actual execution roles. */
-export function resolvePiModel(registry: ModelRegistry, selector: string, sessionId: string) {
+export function resolvePiModel(registry: ModelRuntime, selector: string, sessionId: string) {
   const separator = selector.indexOf('/');
   if (separator <= 0 || separator === selector.length - 1) throw new Error('Use model format provider/model-id.');
   const provider = selector.slice(0, separator), id = selector.slice(separator + 1);
-  const model = registry.find(provider, id);
+  const model = registry.getModel(provider, id);
   if (!model) throw new Error(`Unknown Pi model: ${selector}. Configure it in Pi's models.json or select a listed model.`);
   return model.provider === 'opencode-go' ? { ...model, headers: {
     ...model.headers, 'x-opencode-session': sessionId
@@ -29,40 +27,36 @@ export function resolvePiModel(registry: ModelRegistry, selector: string, sessio
 /** Real Pi sessions with separate contexts, tools, and persisted session references. */
 export class PiAgents implements Agents {
   private readonly active = new Set<AgentSession>();
-  private readonly auth = AuthStorage.create();
-  private readonly registry = ModelRegistry.create(this.auth);
-  constructor(private readonly store: Store, private readonly state: ProjectState, private readonly options: PiOptions = {}) {}
+  private readonly runtime = ModelRuntime.create();
+  private builderSession: AgentSession | undefined;
+  constructor(private readonly store: Store, private readonly state: ProjectState, private readonly options: PiOptions = {},
+    private readonly nativeConversation?: Agents['converse']) {}
   async build(slice: Slice, signal: AbortSignal, emit: (event: unknown) => void) {
-    const root = this.store.workspace;
-    const checkedRead = async (path: string) => readFile(await workspacePath(root, path));
-    const checkedAccess = async (path: string) => access(await workspacePath(root, path));
-    const checkedWrite = async (path: string, content: string) => writeFile(await workspacePath(root, path), content);
-    const read = createReadToolDefinition(root, { operations: { readFile: checkedRead, access: checkedAccess } });
-    const write = createWriteToolDefinition(root, { operations: { writeFile: checkedWrite,
-      mkdir: async path => { await mkdir(await workspacePath(root, path), { recursive: true }); } } });
-    const edit = createEditToolDefinition(root, { operations: { readFile: checkedRead, writeFile: checkedWrite, access: checkedAccess } });
-    const local = createLocalBashOperations();
-    const bash = createBashToolDefinition(root, { operations: { exec: async (command, cwd, options) => {
-      if (!routineCommand(command)) {
-        const allowed = await this.options.approve?.(command, options.signal);
-        if (!allowed) throw new Error('Command needs explicit human consent. Report blocked if it is necessary.');
-      }
-      if (signal.aborted) throw new Error('Builder cancelled');
-      return local.exec(command, cwd, options);
-    } } });
-    const actual = await this.session('builder', [
-      defineTool({ ...read, name: 'workspace_read' }), defineTool({ ...write, name: 'workspace_write' }),
-      defineTool({ ...edit, name: 'workspace_edit' }), defineTool({ ...bash, name: 'workspace_bash' })
-    ]);
+    const actual = await this.session('builder');
+    this.builderSession = actual;
     const off = actual.subscribe(event => {
+      if (event.type === 'message_end' && event.message.role === 'user') {
+        const content = JSON.stringify(event.message.content);
+        for (const note of this.state.builderMessages ?? []) if (note.sliceId === slice.id && note.status !== 'received'
+          && content.includes(note.id)) emit({ type: 'builder_note_received', id: note.id });
+      }
       if (event.type === 'tool_execution_start') emit(`Pi is using ${event.toolName}`);
       if (event.type === 'tool_execution_start' || event.type === 'tool_execution_end' || event.type === 'message_end') emit(event);
     });
     try {
-      return await this.structured(actual, JSON.stringify({ slice: slice.plan, snapshot: slice.snapshot }), BuilderSchema, signal);
-    } finally { off(); actual.dispose(); this.active.delete(actual); }
+      const notes = (this.state.builderMessages ?? []).filter(note => note.sliceId === slice.id && note.status === 'pending');
+      return await this.structured(actual, JSON.stringify({ slice: slice.plan, snapshot: slice.snapshot, builderNotes: notes }), BuilderSchema, signal);
+    } finally { this.builderSession = undefined; off(); actual.dispose(); this.active.delete(actual); }
+  }
+  /** Pi's normal steering queue delivers notes at its next tool/assistant boundary. */
+  async steerBuilder(message: BuilderMessage): Promise<'queued' | 'pending'> {
+    const actual = this.builderSession;
+    if (!actual?.isStreaming) return 'pending';
+    const disposition = await actual.steer(`Human note to the Builder (${message.id}):\n${message.text}\nRespond in your report. Keep the supplied slice scope; scope changes use Fade's explicit redirect.`, undefined, { source: 'extension' });
+    return disposition === 'queued' ? 'queued' : 'pending';
   }
   async converse(state: ProjectState, message: string, signal: AbortSignal) {
+    if (this.nativeConversation) return this.nativeConversation(state, message, signal);
     const session = await this.session('companion');
     try {
       const context = { trigger: message ? 'human-conversation' : 'builder-discovery-reconciliation',
@@ -86,30 +80,26 @@ export class PiAgents implements Agents {
     }
   }
   async models(): Promise<string[]> {
-    return this.registry.getAvailable().map(m => `${m.provider}/${m.id}`);
+    return (await (await this.runtime).getAvailable()).map(m => `${m.provider}/${m.id}`);
   }
-  private async session(role: 'builder' | 'companion', tools: NonNullable<Parameters<typeof createAgentSession>[0]>['customTools'] = []) {
-    // Preserve Pi model defaults and credentials; disable package/resource discovery.
-    const loader = new DefaultResourceLoader({ cwd: this.store.workspace, agentDir: getAgentDir(),
-      settingsManager: SettingsManager.inMemory({ packages: [], extensions: [] }),
-      noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
-      systemPrompt: role === 'builder' ? BUILDER_PROMPT : COMPANION_PROMPT });
-    await loader.reload();
+  private async session(role: 'builder' | 'companion') {
+    const configured = SettingsManager.create(this.store.workspace, getAgentDir());
+    const runtime = await this.runtime;
+    // Use Pi's complete tool/resource loading, adding only the role's instructions.
+    const services = await createAgentSessionServices({ cwd: this.store.workspace, agentDir: getAgentDir(),
+      modelRuntime: runtime, settingsManager: configured, resourceLoaderOptions: {
+        extensionFactories: await piBuiltins(), appendSystemPrompt: [role === 'builder' ? BUILDER_PROMPT : COMPANION_PROMPT] } });
     const selector = role === 'builder' ? this.options.builderModel : this.options.companionModel;
     const sessionsDir = join(this.store.directory, 'sessions', role); await mkdir(sessionsDir, { recursive: true });
     // Full history stays in Pi files and journal. Each turn has a concise explicit context, preventing stale hidden briefs.
     const manager = SessionManager.create(this.store.workspace, sessionsDir);
-    const configured = SettingsManager.create(this.store.workspace, getAgentDir());
-    const settings = SettingsManager.inMemory({ ...configured.getGlobalSettings(), ...configured.getProjectSettings(),
-      packages: [], extensions: [], retry: { enabled: true, maxRetries: 1 }, compaction: { enabled: true } });
-    const { session } = await createAgentSession({ cwd: this.store.workspace,
-      ...(selector ? { model: resolvePiModel(this.registry, selector, manager.getSessionId()) } : {}),
-      thinkingLevel: role === 'companion' ? this.options.companionThinkingLevel ?? 'off' : 'off', authStorage: this.auth, modelRegistry: this.registry,
-      resourceLoader: loader, sessionManager: manager,
-      settingsManager: settings,
-      tools: tools?.map(t => t.name) ?? [], customTools: tools ?? [] });
+    const { session } = await createAgentSessionFromServices({ services,
+      ...(selector ? { model: resolvePiModel(runtime, selector, manager.getSessionId()) } : {}),
+      ...(role === 'companion' && this.options.companionThinkingLevel ? { thinkingLevel: this.options.companionThinkingLevel } : {}),
+      sessionManager: manager });
+    await session.bindExtensions({});
     if (session.model?.provider === 'opencode-go') await session.setModel(
-      resolvePiModel(this.registry, `${session.model.provider}/${session.model.id}`, manager.getSessionId()));
+      resolvePiModel(runtime, `${session.model.provider}/${session.model.id}`, manager.getSessionId()));
     this.active.add(session);
     const file = manager.getSessionFile();
     if (file) {

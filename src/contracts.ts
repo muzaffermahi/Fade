@@ -1,4 +1,4 @@
-import { Type, type Static, type TSchema } from '@sinclair/typebox';
+import { Type, type Static, type TSchema } from 'typebox';
 import { Ajv } from 'ajv';
 
 const text = Type.String({ minLength: 1, maxLength: 20000 });
@@ -19,6 +19,9 @@ export const PlanSchema = Type.Object({ title: text, goal: text,
 /** A conversational reply and a conservative, evidence-backed intent delta. */
 export const CompanionSchema = Type.Object({ reply: text, evidence: Type.Array(Evidence, { maxItems: 20 }),
   openQuestions: strings, next: Type.Union([PlanSchema, Type.Null()]) }, object);
+/** Structured intent metadata, separate from Pi's natural streaming response. */
+export const IntentUpdateSchema = Type.Omit(CompanionSchema, ['reply']);
+export type IntentUpdate = Static<typeof IntentUpdateSchema>;
 /** Claims made by Pi, retained as claims alongside its actual execution events. */
 export const BuilderSchema = Type.Object({ status: BuildStatus, summary: text,
   verification: strings, discoveries: Type.Array(Type.Object({ summary: text, affects: strings }, object), { maxItems: 20 }) }, object);
@@ -28,6 +31,10 @@ const DecisionSchema = Type.Object({ id: text, key: text, text, quote: text,
 export const IntentSchema = Type.Object({ revision: Type.Integer({ minimum: 0 }), vision: text,
   decisions: Type.Array(DecisionSchema), openQuestions: strings }, object);
 const SnapshotSchema = Type.Object({ intent: IntentSchema, requirements: strings, goal: text }, object);
+/** Durable notes for the Builder; receipt means the note entered its Pi context. */
+export const BuilderMessageSchema = Type.Object({ id: text, text, timestamp: Type.Integer(),
+  sliceId: Type.Optional(text), status: Type.Union([Type.Literal('pending'), Type.Literal('queued'), Type.Literal('received')]) }, object);
+export type BuilderMessage = Static<typeof BuilderMessageSchema>;
 export const StateSchema = Type.Object({ version: Type.Literal(1), id: text, workspace: text,
   revision: Type.Integer({ minimum: 0 }), mode: Mode,
   preference: Preference, remainingSlices: Type.Integer({ minimum: 0, maximum: 20 }),
@@ -37,6 +44,7 @@ export const StateSchema = Type.Object({ version: Type.Literal(1), id: text, wor
     snapshot: Type.Optional(SnapshotSchema), result: Type.Optional(BuilderSchema) }, object)),
   conversation: Type.Array(Type.Object({ id: text, role: Type.Union([Type.Literal('human'), Type.Literal('companion')]), text,
     timestamp: Type.Integer(), applied: Type.Optional(Type.Boolean()) }, object)),
+  builderMessages: Type.Optional(Type.Array(BuilderMessageSchema)),
   discoveries: Type.Array(Type.Object({ summary: text, affects: strings }, object)),
   history: Type.Array(Type.Object({ timestamp: Type.Integer(), reason: text, intent: IntentSchema }, object)),
   sessions: Type.Object({ companion: Type.Optional(text), builders: strings }, object)

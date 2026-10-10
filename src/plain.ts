@@ -2,11 +2,11 @@
 import { createInterface, clearLine, cursorTo } from 'node:readline';
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
-import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { Coordinator, errorText, type Notice } from './coordinator.js';
 import { Store, renderIntent } from './store.js';
 import { PiAgents, type PiOptions } from './pi.js';
+import { builderReport, reports, executionLog } from './reports.js';
 
 const HELP = `Fade — a tool for the mind
 
@@ -15,6 +15,9 @@ Write to the Companion while Pi builds. No minimum length, no tickets.
   /write               Compose across lines; /send submits, /cancel keeps silence
   /editor              Write in your configured editor (FADE_EDITOR or VISUAL)
   /status              Present, future, and recent outcomes
+  /builder [message]   Inspect the Builder or send a saved note
+  /companion <message> Talk to the Companion explicitly
+  /reports             Read both agents' reports and checks
   /intent              Read Living Intent and see its editable JSON path
   /reload              Import your edited intent-edit.json, with a revision check
   /rethink             Reconcile discoveries or retry a failed conversation
@@ -24,14 +27,13 @@ Write to the Companion while Pi builds. No minimum length, no tickets.
   /history             Your conversation
   /models              Available Pi provider/model IDs
   /preference design|technical
-  /allow <id> /deny <id> Consent to a specific nonroutine shell command
   /quit                Save and leave
 
 Launch: Fade [--workspace <directory>] [--idea "your idea"]
 The current directory is your workspace by default. Launch there again to resume.
 Models: --builder provider/model --companion provider/model
 Only local trusted code should be executed. Pi shell commands and generated code
-run with your OS permissions; Fade's path guards are not a shell sandbox.
+run with your OS permissions.
 `;
 
 function flag(name: string): string | undefined {
@@ -54,7 +56,6 @@ export async function runPlain(): Promise<void> {
   const terminal = createInterface({ input: process.stdin, output: process.stdout, terminal: Boolean(process.stdin.isTTY) });
   let quitting = false, inputEnded = false, composing = false, draft: string[] = [], pending = 0;
   let coordinator: Coordinator | undefined;
-  const permissions = new Map<string, (allowed: boolean) => void>();
   const show = ({ role, text }: Notice) => {
     if (quitting) return;
     if (process.stdout.isTTY) { clearLine(process.stdout, 0); cursorTo(process.stdout, 0); }
@@ -62,15 +63,7 @@ export async function runPlain(): Promise<void> {
     console.log(`\n${role === 'companion' ? 'Companion' : role === 'builder' ? '  Pi' : 'Fade'}\n${safe}\n`);
     terminal.prompt(true);
   };
-  const options: PiOptions = { approve: (command, signal) => new Promise(resolveApproval => {
-    if (inputEnded || quitting) { resolveApproval(false); return; }
-    const id = randomUUID().slice(0, 8);
-    const finish = (allowed: boolean) => { permissions.delete(id); signal?.removeEventListener('abort', abort); resolveApproval(allowed); };
-    const abort = () => finish(false);
-    if (signal?.aborted) { finish(false); return; }
-    permissions.set(id, finish); signal?.addEventListener('abort', abort, { once: true });
-    show({ role: 'system', text: `Pi requests a nonroutine command:\n${command}\nIt runs with your OS permissions. /allow ${id} or /deny ${id}` });
-  }) };
+  const options: PiOptions = {};
   if (builder) options.builderModel = builder;
   if (companion) options.companionModel = companion;
   const initialize = (idea: string) => {
@@ -93,7 +86,7 @@ export async function runPlain(): Promise<void> {
   else console.log('What do you want to create? Your first message starts the project.\n');
   const quit = async () => {
     if (quitting) return;
-    quitting = true; for (const answer of permissions.values()) answer(false);
+    quitting = true;
     if (coordinator) await coordinator.close(); else store.close();
     terminal.close();
   };
@@ -132,13 +125,13 @@ export async function runPlain(): Promise<void> {
       } finally { terminal.resume(); }
       talk(readFileSync(file, 'utf8')); return;
     }
-    if (command.startsWith('/allow ') || command.startsWith('/deny ')) {
-      const id = command.split(' ')[1] ?? '', answer = permissions.get(id);
-      if (!answer) throw new Error('No pending command with that id.');
-      answer(command.startsWith('/allow ')); return;
-    }
+
     if (!coordinator) { if (command.startsWith('/')) throw new Error('Start a project with your idea first.'); talk(input); return; }
     const c = coordinator;
+    if (command === '/builder') { console.log(builderReport(c.state)); return; }
+    if (command.startsWith('/builder ')) { await c.messageBuilder(command.slice(9)); return; }
+    if (command === '/reports') { console.log(reports(c.state)); return; }
+    if (command.startsWith('/companion ')) { talk(command.slice(11)); return; }
     if (command === '/pause' || command === '/stop') { await c.pause(command === '/stop'); return; }
     if (command === '/resume') { c.resume(); return; }
     if (command === '/intent') { console.log(renderIntent(c.state)); console.log(`Edit ${store.prepareIntentEdit(c.state)}, then /reload.`); return; }
@@ -150,7 +143,7 @@ export async function runPlain(): Promise<void> {
     }
     if (command === '/history') { console.log(c.state.conversation.map(m => `${m.role}\n${m.text}\n`).join('\n')); return; }
     if (command === '/log') {
-      try { console.log(readFileSync(join(store.directory, 'builder-events.jsonl'), 'utf8').trim().split('\n').slice(-20).join('\n')); }
+      try { console.log(executionLog(readFileSync(join(store.directory, 'builder-events.jsonl'), 'utf8'))); }
       catch { console.log('No execution events yet.'); } return;
     }
     if (command === '/models') {
@@ -171,7 +164,7 @@ export async function runPlain(): Promise<void> {
   terminal.on('SIGINT', () => { void quit(); });
   process.once('SIGTERM', () => { void quit(); });
   // Piped input may end before async handlers: let accepted conversations finish, then stop.
-  terminal.once('close', () => { inputEnded = true; for (const answer of permissions.values()) answer(false); if (!quitting) void (async () => {
+  terminal.once('close', () => { inputEnded = true; if (!quitting) void (async () => {
     while (pending) await new Promise(resolvePending => setTimeout(resolvePending, 20));
     await coordinator?.idle(); await quit();
   })(); });

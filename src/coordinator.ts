@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto';
-import { CompanionSchema, BuilderSchema, validate, type BuilderResult, type CompanionReply,
-  type Intent, type ProjectState, type Slice } from './contracts.js';
+import { CompanionSchema, BuilderSchema, BuilderMessageSchema, validate, type BuilderResult, type CompanionReply,
+  type Intent, type ProjectState, type Slice, type BuilderMessage } from './contracts.js';
 import { Store } from './store.js';
 
 /** Ports keep coordination tests independent from models and shell execution. */
 export interface Agents {
   build(slice: Slice, signal: AbortSignal, event: (value: unknown) => void): Promise<BuilderResult>;
   converse(state: ProjectState, message: string, signal: AbortSignal): Promise<CompanionReply>;
+  steerBuilder?(message: BuilderMessage): Promise<'queued' | 'pending'>;
   close(): void;
 }
 export type Notice = { role: 'builder' | 'companion' | 'system'; text: string };
@@ -27,12 +28,13 @@ export class Coordinator {
     return { version: 1, id: randomUUID(), workspace, revision: 0, mode: 'paused', preference,
       remainingSlices: 4, intent: { revision: 0, vision, decisions: [], openQuestions: [] },
       slices: [{ id: randomUUID(), status: 'ready', plan: { title: 'First working thread',
-        goal: 'Build the smallest runnable foundation of this idea. Choose a bounded walking skeleton, document how to run it, and verify it. Leave consequential product choices open.',
+        goal: 'Inspect the existing workspace first. For an existing project, make only a bounded improvement clearly supported by the human request. For an inspection or unclear request, report findings without inventing edits. Build a small runnable foundation only if the workspace is empty and the human requested creating something. Verify actual changes and leave consequential product choices open.',
         requirements: [vision], decisionKeys: [], dependencies: [], assumptions: [], ready: true } }],
       conversation: [], discoveries: [], history: [], sessions: { builders: [] } };
   }
   recover(): void {
     for (const slice of this.state.slices) if (slice.status === 'running') slice.status = 'interrupted';
+    for (const note of this.state.builderMessages ?? []) if (note.status !== 'received') { note.status = 'pending'; delete note.sliceId; }
     this.state.mode = 'paused'; this.persist();
   }
   start(): void { this.state.mode = 'running'; this.needsReconciliation ||= this.state.slices.some(s => s.status === 'reconcile'); this.persist(); this.schedule(); }
@@ -59,6 +61,30 @@ export class Coordinator {
     return this.converse(message, true);
   }
   get isConversing(): boolean { return Boolean(this.conversationTask); }
+  /** Save before transport; Pi receipts distinguish queued notes from actual context delivery. */
+  async messageBuilder(text: string): Promise<BuilderMessage> {
+    if (this.closing || !text.trim()) throw new Error('Write a message for the Builder.');
+    const note = validate(BuilderMessageSchema, { id: randomUUID(), text, timestamp: Date.now(), status: 'pending' });
+    const active = this.state.slices.find(s => s.status === 'running');
+    if (active) note.sliceId = active.id;
+    (this.state.builderMessages ??= []).push(note); this.persist();
+    if (active && this.agents.steerBuilder) {
+      try {
+        const disposition = await this.agents.steerBuilder(structuredClone(note));
+        if (this.closing) return structuredClone(this.state.builderMessages?.find(n => n.id === note.id) ?? note);
+        const current = this.state.builderMessages?.find(n => n.id === note.id);
+        if (current && current.status !== 'received') current.status =
+          current.sliceId && this.state.slices.some(s => s.id === current.sliceId && s.status === 'running') ? disposition : 'pending';
+      } catch (error) {
+        if (this.closing) return structuredClone(this.state.builderMessages?.find(n => n.id === note.id) ?? note);
+        this.notice({ role: 'system', text: `Builder delivery failed: ${errorText(error)}. Your note remains saved for the next slice.` });
+      }
+      this.persist();
+    }
+    const saved = this.state.builderMessages?.find(n => n.id === note.id) ?? note;
+    this.notice({ role: 'system', text: `Builder note ${note.id.slice(0, 8)} · ${saved.status === 'pending' ? 'saved for the next Builder turn' : saved.status === 'queued' ? 'queued in Pi; receipt pending' : 'received by the Builder'}.` });
+    return structuredClone(saved);
+  }
   /** Persist terminal input immediately, even when another reply is in flight. */
   accept(message: string): string {
     if (this.closing) throw new Error('Project is closing.');
@@ -184,6 +210,7 @@ export class Coordinator {
       slice.status = 'reconcile'; this.persist(); return;
     }
     slice.snapshot = structuredClone({ intent: this.state.intent, requirements: slice.plan.requirements, goal: slice.plan.goal });
+    for (const note of this.state.builderMessages ?? []) if (note.status === 'pending') note.sliceId = slice.id;
     slice.status = 'running'; this.state.remainingSlices--; this.persist();
     const controller = new AbortController(); this.buildAbort = controller;
     this.notice({ role: 'builder', text: `Building: ${slice.plan.title}` });
@@ -191,6 +218,14 @@ export class Coordinator {
       try {
         const result = validate(BuilderSchema, await this.agents.build(structuredClone(slice), controller.signal, event => {
           this.store.event({ sliceId: slice.id, event });
+          if (event && typeof event === 'object' && 'type' in event && event.type === 'builder_note_received'
+            && 'id' in event && typeof event.id === 'string') {
+            const note = this.state.builderMessages?.find(n => n.id === event.id && n.sliceId === slice.id);
+            if (note && note.status !== 'received') {
+              note.status = 'received'; this.persist();
+              this.notice({ role: 'system', text: `Builder received note ${note.id.slice(0, 8)}.` });
+            }
+          }
           if (typeof event === 'string') this.notice({ role: 'builder', text: event });
         }));
         if (controller.signal.aborted) { slice.status = 'interrupted'; return; }
@@ -208,8 +243,12 @@ export class Coordinator {
         if (slice.plan.decisionKeys.length) this.notice({ role: 'system', text: `This slice carried your decisions: ${slice.plan.decisionKeys.join(', ')}. /intent shows their source.` });
       } catch (error) {
         slice.status = controller.signal.aborted ? 'interrupted' : 'blocked';
+        if (!controller.signal.aborted) slice.result = { status: 'blocked', summary: errorText(error), verification: [], discoveries: [] };
         this.notice({ role: 'builder', text: `${slice.status}: ${errorText(error)}` });
       } finally {
+        for (const note of this.state.builderMessages ?? []) if (note.sliceId === slice.id && note.status !== 'received') {
+          note.status = 'pending'; delete note.sliceId;
+        }
         this.buildTask = undefined; this.buildAbort = undefined; this.persist();
         if (!this.state.remainingSlices) this.notice({ role: 'system', text: 'Four-slice session limit reached. /resume continues when you want.' });
         this.schedule();

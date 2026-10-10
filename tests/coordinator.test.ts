@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { Coordinator, type Agents, type Notice } from '../src/coordinator.js';
 import { Store } from '../src/store.js';
 import { validate, CompanionSchema, parseResponse, type BuilderResult, type CompanionReply, type Slice } from '../src/contracts.js';
-import { routineCommand, workspacePath } from '../src/workspace.js';
+import { workspacePath } from '../src/workspace.js';
 
 const complete: BuilderResult = { status: 'completed', summary: 'Implemented', verification: ['node --check: passed'], discoveries: [] };
 function deferred<T>() {
@@ -21,8 +21,12 @@ class Fake implements Agents {
   reply: CompanionReply = { reply: 'Your idea deserves room to develop.', evidence: [], openQuestions: [], next: null };
   conversationGate: ReturnType<typeof deferred<CompanionReply>> | undefined;
   reconciliationReply: CompanionReply = { reply: 'The discovery remains unresolved.', evidence: [], openQuestions: [], next: null };
+  buildEvents: ((event: unknown) => void)[] = [];
+  noteGate: ReturnType<typeof deferred<'queued' | 'pending'>> | undefined;
+  async steerBuilder() { return this.noteGate?.promise ?? 'queued' as const; }
   async build(slice: Slice, signal: AbortSignal, emit: (event: unknown) => void) {
     this.builds.push(slice); emit('Actual fake test event');
+    this.buildEvents.push(emit);
     const result = deferred<BuilderResult>(); this.results.push(result);
     signal.addEventListener('abort', () => result.reject(new Error('cancelled')), { once: true });
     return result.promise;
@@ -165,8 +169,6 @@ test('FADE-11: canonical paths reject traversal, protected state and symlink esc
   assert.equal(await workspacePath(workspace, 'src/new.ts'), join(workspace, 'src/new.ts'));
   symlinkSync(outside, join(workspace, 'link'), process.platform === 'win32' ? 'junction' : 'dir');
   await assert.rejects(workspacePath(workspace, 'link/new.txt'));
-  assert.equal(routineCommand('node --check src/main.js'), true);
-  for (const command of ['rm -rf src', 'git push', 'npm run deploy', 'node -e "danger"', 'cat ../secret', 'npm test; rm -rf src']) assert.equal(routineCommand(command), false);
 });
 test('FADE-13: discovery reconciliation preserves authorship and can continue without new human input', async () => {
   const { c, fake } = setup(); c.start(); fake.reply.next = next(c); await c.talk('I want local notes');
@@ -188,4 +190,55 @@ test('FADE-14: the automatic slice limit prevents an uncontrolled execution loop
   assert.equal(c.state.remainingSlices, 0);
   assert.equal(c.state.slices.at(-1)?.status, 'ready');
   c.resume(); assert.equal(fake.builds.length, 5); await c.pause();
+});
+
+test('FADE-22: Builder notes are durable, queued is distinct from received, and snapshots remain fixed', async () => {
+  const { c, fake, store } = setup(); c.start();
+  const before = structuredClone(c.state.slices[0]?.snapshot);
+  const note = await c.messageBuilder('Explain which checks you ran.');
+  assert.equal(note.status, 'queued');
+  assert.equal(store.load()?.builderMessages?.[0]?.text, note.text);
+  fake.buildEvents[0]?.({ type: 'builder_note_received', id: note.id });
+  assert.equal(c.state.builderMessages?.[0]?.status, 'received');
+  assert.deepEqual(c.state.slices[0]?.snapshot, before);
+  await c.close();
+});
+
+test('FADE-23: notes survive concurrent intent replacement and undelivered queues recover for the next turn', async () => {
+  const { c, fake, store } = setup(); c.start(); fake.noteGate = deferred<'queued' | 'pending'>();
+  const sending = c.messageBuilder('Report your current limitation.');
+  await c.talk('Keep the work local.'); // Replaces the state, including a cloned mailbox.
+  const note = c.state.builderMessages?.[0]; assert.ok(note);
+  fake.buildEvents[0]?.({ type: 'builder_note_received', id: note.id });
+  fake.noteGate.resolve('queued'); await sending;
+  assert.equal(c.state.builderMessages?.[0]?.status, 'received');
+  fake.noteGate = undefined;
+  const undelivered = await c.messageBuilder('A question saved before interruption.');
+  assert.equal(undelivered.status, 'queued'); await c.pause();
+  assert.equal(c.state.builderMessages?.[1]?.status, 'pending');
+  const recovered = new Coordinator(store.load() ?? c.state, store, fake); recovered.recover();
+  assert.equal(recovered.state.builderMessages?.[0]?.status, 'received');
+  assert.equal(recovered.state.builderMessages?.[1]?.status, 'pending');
+  await recovered.close(); await c.close();
+});
+
+test('FADE-25: a late queue response cannot strand a note on a finished Builder, and invalid notes never mutate the mailbox', async () => {
+  const { c, fake } = setup(); c.start(); fake.noteGate = deferred<'queued' | 'pending'>();
+  const sending = c.messageBuilder('Retain this question if the current turn finishes.');
+  fake.results[0]?.resolve(complete); await c.idle();
+  fake.noteGate.resolve('queued'); const saved = await sending;
+  assert.equal(saved.status, 'pending'); assert.equal(saved.sliceId, undefined);
+  const count = c.state.builderMessages?.length;
+  await assert.rejects(c.messageBuilder('x'.repeat(20001)), /Invalid data/);
+  assert.equal(c.state.builderMessages?.length, count);
+  await c.close();
+});
+
+test('FADE-26: late Builder transport cannot write state after the workspace is closed', async () => {
+  const { c, fake, store } = setup(); c.start(); fake.noteGate = deferred<'queued' | 'pending'>();
+  const sending = c.messageBuilder('Keep this question through shutdown.');
+  await c.close(); const journal = readFileSync(join(store.directory, 'journal.jsonl'), 'utf8');
+  fake.noteGate.resolve('queued'); const saved = await sending;
+  assert.equal(saved.status, 'pending');
+  assert.equal(readFileSync(join(store.directory, 'journal.jsonl'), 'utf8'), journal);
 });

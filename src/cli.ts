@@ -15,7 +15,7 @@ function flag(name: string): string | undefined {
 }
 async function main(): Promise<void> {
   if (process.argv.includes('--help')) {
-    console.log('Fade — a tool for the mind\n\nFade opens Pi’s native TUI. Every ordinary prompt uses Fade’s loop automatically.\n\nFade [--workspace <directory>] [--idea "your idea"]\n     [--builder provider/model] [--companion provider/model]\n     [--plain] (line-based input for scripts)\n\nThe launch directory is your workspace. /help shows Fade controls.');
+    console.log('Fade — a tool for the mind\n\nFade opens Pi’s native TUI. Every ordinary prompt uses Fade’s loop automatically.\n\nFade [--workspace <directory>] [--idea "your idea"]\n     [--builder provider/model] [--companion provider/model]\n     [--plain] (line-based input for scripts)\n\nChat with the Companion normally. /builder <message> addresses the Builder.\n/reports shows both roles; /log shows actual Builder tool results.\nThe launch directory is your workspace. /help shows Fade controls.');
     return;
   }
   if (process.argv.includes('--plain') || !process.stdin.isTTY || !process.stdout.isTTY) { await runPlain(); return; }

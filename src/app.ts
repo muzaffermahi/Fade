@@ -4,9 +4,10 @@ import { Coordinator, errorText, type Agents, type Notice } from './coordinator.
 import type { ProjectState } from './contracts.js';
 import { Store, renderIntent } from './store.js';
 import { PiAgents, type PiOptions } from './pi.js';
+import { builderReport, reports, executionLog } from './reports.js';
 
-export type AgentFactory = (store: Store, state: ProjectState, options: PiOptions) => Agents;
-/** Owns Fade's loop independently of Pi's presentation-only TUI session. */
+export type AgentFactory = (store: Store, state: ProjectState, options: PiOptions, nativeConversation?: Agents['converse']) => Agents;
+/** Owns Fade's durable project loop alongside the native Pi conversation. */
 export class FadeApp {
   coordinator: Coordinator | undefined;
   private queued: Promise<void> = Promise.resolve();
@@ -55,6 +56,15 @@ export class FadeApp {
       case 'pause': await c.pause(); break;
       case 'stop': await c.pause(true); break;
       case 'continue': c.resume(); break;
+      case 'builder':
+        if (args.trim()) await c.messageBuilder(args.trim());
+        else this.show({ role: 'system', text: builderReport(c.state) });
+        break;
+      case 'companion':
+        if (args.trim()) await this.submit(args.trim());
+        else this.show({ role: 'system', text: c.state.conversation.filter(m => m.role === 'companion').at(-1)?.text ?? 'Write a regular prompt to talk with the Companion.' });
+        break;
+      case 'reports': this.show({ role: 'system', text: reports(c.state) }); break;
       case 'status': this.show({ role: 'system', text: `${c.state.mode}; ${c.state.remainingSlices} slices left\n\n` + c.state.slices.slice(-8).map(s => `${s.status} · ${s.plan.title}\n${s.result?.summary ?? s.plan.goal}`).join('\n\n') }); break;
       case 'intent': this.show({ role: 'system', text: renderIntent(c.state) + `\nEdit ${this.store.prepareIntentEdit(c.state)}, then /apply-intent.` }); break;
       case 'apply-intent': c.editIntent(this.store.readIntent()); break;
@@ -66,7 +76,7 @@ export class FadeApp {
       case 'history': for (const message of c.state.conversation) this.show({ role: message.role === 'human' ? 'system' : 'companion', text: message.text }); break;
       case 'log': {
         let log = 'No Builder events yet.';
-        try { log = readFileSync(join(this.store.directory, 'builder-events.jsonl'), 'utf8').trim().split('\n').slice(-20).join('\n'); } catch { /* Empty log is normal. */ }
+        try { log = executionLog(readFileSync(join(this.store.directory, 'builder-events.jsonl'), 'utf8')); } catch { /* Empty log is normal. */ }
         this.show({ role: 'system', text: log }); break;
       }
       case 'preference':

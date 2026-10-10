@@ -25,9 +25,3 @@ export async function workspacePath(root: string, input: string): Promise<string
   }
   return target;
 }
-/** Conservative command gate, not an OS sandbox. Unknown commands need explicit consent. */
-export function routineCommand(command: string): boolean {
-  if (/[\n\r;&|<>`$]/.test(command) || /\.\.|\.fade|\.git\b|https?:|\b(?:deploy|publish|push|remove|delete|unlink|rm|rmdir|del|start|serve)\b/i.test(command)) return false;
-  if (/(?:^|\s)(?:[A-Za-z]:[\\/]|\/|~)/.test(command)) return false;
-  return /^(?:node\s+(?!--eval\b|-e\b)|npm\s+(?:install|test|run\s+(?:test|build|check|lint))\b|npx\s+(?:tsc|vitest)\b|(?:ls|pwd|rg|cat)\b)/.test(command.trim());
-}
