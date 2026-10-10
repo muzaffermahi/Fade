@@ -6,6 +6,9 @@ import { Store } from '../src/store.js';
 import { PiAgents } from '../src/pi.js';
 
 // Explicit opt-in: makes real model calls and runs generated code in a fresh temp workspace.
+const builderModel = process.env.FADE_BUILDER_MODEL;
+const companionModel = process.env.FADE_COMPANION_MODEL;
+if (!builderModel || !companionModel) throw new Error('Set FADE_BUILDER_MODEL and FADE_COMPANION_MODEL explicitly before running the live smoke test.');
 const workspace = mkdtempSync(join(tmpdir(), 'fade-live-'));
 const store = new Store(workspace); store.lock();
 const state = Coordinator.initial(workspace, 'Build a tiny dependency-free Node terminal notebook.');
@@ -13,8 +16,7 @@ const first = state.slices[0];
 if (!first) throw new Error('Missing foundation slice');
 first.plan = { title: 'Notebook foundation', goal: 'Create notebook.mjs exporting addNote(notes,text) returning a new array, and README.md. Verify with node --check notebook.mjs. No dependencies. Do not yet implement search.',
   requirements: ['Create notebook.mjs and README.md only.'], decisionKeys: [], dependencies: [], assumptions: [], ready: true };
-const options = { builderModel: process.env.FADE_BUILDER_MODEL ?? 'opencode-go/deepseek-v4.1-flash',
-  companionModel: process.env.FADE_COMPANION_MODEL ?? 'opencode-go/deepseek-v4.1-flash' };
+const options = { builderModel, companionModel };
 const c = new Coordinator(state, store, new PiAgents(store, state, options), notice => console.log(`${notice.role}: ${notice.text}`));
 console.log(`Live workspace: ${workspace}`);
 try {

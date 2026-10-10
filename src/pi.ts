@@ -12,7 +12,19 @@ import { routineCommand, workspacePath } from './workspace.js';
 
 export interface PiOptions {
   builderModel?: string; companionModel?: string;
+  companionThinkingLevel?: NonNullable<Parameters<typeof createAgentSession>[0]>['thinkingLevel'];
   approve?: (command: string, signal: AbortSignal | undefined) => Promise<boolean>;
+}
+/** Shared model selection for the native UI and the two actual execution roles. */
+export function resolvePiModel(registry: ModelRegistry, selector: string, sessionId: string) {
+  const separator = selector.indexOf('/');
+  if (separator <= 0 || separator === selector.length - 1) throw new Error('Use model format provider/model-id.');
+  const provider = selector.slice(0, separator), id = selector.slice(separator + 1);
+  const model = registry.find(provider, id);
+  if (!model) throw new Error(`Unknown Pi model: ${selector}. Configure it in Pi's models.json or select a listed model.`);
+  return model.provider === 'opencode-go' ? { ...model, headers: {
+    ...model.headers, 'x-opencode-session': sessionId
+  } } : model;
 }
 /** Real Pi sessions with separate contexts, tools, and persisted session references. */
 export class PiAgents implements Agents {
@@ -74,9 +86,7 @@ export class PiAgents implements Agents {
     }
   }
   async models(): Promise<string[]> {
-    const models = this.registry.getAvailable().map(m => `${m.provider}/${m.id}`);
-    if (models.includes('opencode-go/deepseek-v4-flash') && !models.includes('opencode-go/deepseek-v4.1-flash')) models.push('opencode-go/deepseek-v4.1-flash');
-    return models;
+    return this.registry.getAvailable().map(m => `${m.provider}/${m.id}`);
   }
   private async session(role: 'builder' | 'companion', tools: NonNullable<Parameters<typeof createAgentSession>[0]>['customTools'] = []) {
     // Preserve Pi model defaults and credentials; disable package/resource discovery.
@@ -85,30 +95,21 @@ export class PiAgents implements Agents {
       noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
       systemPrompt: role === 'builder' ? BUILDER_PROMPT : COMPANION_PROMPT });
     await loader.reload();
-    const selector = (role === 'builder' ? this.options.builderModel : this.options.companionModel) ?? 'opencode-go/deepseek-v4.1-flash';
-    const separator = selector.indexOf('/');
-    if (separator <= 0 || separator === selector.length - 1) throw new Error('Use model format provider/model-id.');
-    const provider = selector.slice(0, separator), id = selector.slice(separator + 1);
-    let model = this.registry.find(provider, id);
-    // The requested Pi release predates this official Go catalog entry. Reuse the
-    // same OpenAI-compatible transport and conservative limits without changing user config.
-    if (!model && provider === 'opencode-go' && id === 'deepseek-v4.1-flash') {
-      const base = this.registry.find('opencode-go', 'deepseek-v4-flash');
-      if (base) model = { ...base, id, name: 'DeepSeek V4.1 Flash',
-        cost: { input: 0.30, output: 1.20, cacheRead: 0.006, cacheWrite: 0 } };
-    }
-    if (!model) throw new Error('No Pi model configured. Run pi /login or configure ~/.pi/agent/models.json; /models lists available models.');
+    const selector = role === 'builder' ? this.options.builderModel : this.options.companionModel;
     const sessionsDir = join(this.store.directory, 'sessions', role); await mkdir(sessionsDir, { recursive: true });
     // Full history stays in Pi files and journal. Each turn has a concise explicit context, preventing stale hidden briefs.
     const manager = SessionManager.create(this.store.workspace, sessionsDir);
-    if (model.provider === 'opencode-go') model = { ...model, headers: {
-      ...model.headers, 'x-opencode-session': manager.getSessionId()
-    } };
-    const { session } = await createAgentSession({ cwd: this.store.workspace, model,
-      thinkingLevel: 'off', authStorage: this.auth, modelRegistry: this.registry,
+    const configured = SettingsManager.create(this.store.workspace, getAgentDir());
+    const settings = SettingsManager.inMemory({ ...configured.getGlobalSettings(), ...configured.getProjectSettings(),
+      packages: [], extensions: [], retry: { enabled: true, maxRetries: 1 }, compaction: { enabled: true } });
+    const { session } = await createAgentSession({ cwd: this.store.workspace,
+      ...(selector ? { model: resolvePiModel(this.registry, selector, manager.getSessionId()) } : {}),
+      thinkingLevel: role === 'companion' ? this.options.companionThinkingLevel ?? 'off' : 'off', authStorage: this.auth, modelRegistry: this.registry,
       resourceLoader: loader, sessionManager: manager,
-      settingsManager: SettingsManager.inMemory({ retry: { enabled: true, maxRetries: 1 }, compaction: { enabled: true } }),
+      settingsManager: settings,
       tools: tools?.map(t => t.name) ?? [], customTools: tools ?? [] });
+    if (session.model?.provider === 'opencode-go') await session.setModel(
+      resolvePiModel(this.registry, `${session.model.provider}/${session.model.id}`, manager.getSessionId()));
     this.active.add(session);
     const file = manager.getSessionFile();
     if (file) {

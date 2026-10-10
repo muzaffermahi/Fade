@@ -50,15 +50,36 @@ export class Coordinator {
     this.buildAbort?.abort(); await this.buildTask;
     this.notice({ role: 'system', text: stop ? 'Builder stopped. Your conversation remains available.' : 'Builder paused. Keep thinking, or /resume when ready.' });
   }
+  /** Explicit terminal interruption cancels conversation and pauses code execution. */
+  async interrupt(): Promise<void> {
+    this.conversationAbort?.abort();
+    await this.pause(); await this.conversationTask;
+  }
   talk(message: string): Promise<void> {
     return this.converse(message, true);
   }
-  private converse(message: string, human: boolean): Promise<void> {
+  get isConversing(): boolean { return Boolean(this.conversationTask); }
+  /** Persist terminal input immediately, even when another reply is in flight. */
+  accept(message: string): string {
+    if (this.closing) throw new Error('Project is closing.');
+    if (!message.trim()) throw new Error('Write an idea before sending.');
+    const source = { id: randomUUID(), role: 'human' as const, text: message, timestamp: Date.now() };
+    this.state.conversation.push(source); this.persist();
+    return source.id;
+  }
+  async waitForConversation(): Promise<void> {
+    while (this.conversationTask) await this.conversationTask;
+  }
+  talkAccepted(sourceId: string): Promise<void> {
+    const source = this.state.conversation.find(m => m.id === sourceId && m.role === 'human');
+    if (!source) return Promise.reject(new Error('Missing saved human message.'));
+    return this.converse(source.text, true, sourceId);
+  }
+  private converse(message: string, human: boolean, acceptedId?: string): Promise<void> {
     if (this.closing) return Promise.reject(new Error('Project is closing.'));
     if (this.conversationTask) return Promise.reject(new Error('Companion is still listening to your previous message. Your draft is retained.'));
     if (human && !message.trim()) return Promise.reject(new Error('Write an idea before sending.'));
-    const source = { id: randomUUID(), role: 'human' as const, text: message, timestamp: Date.now() };
-    if (human) { this.state.conversation.push(source); this.persist(); }
+    const sourceId = acceptedId ?? (human ? this.accept(message) : randomUUID());
     const snapshot = structuredClone(this.state), revision = snapshot.intent.revision;
     const controller = new AbortController(); this.conversationAbort = controller;
     this.conversationTask = (async () => {
@@ -68,7 +89,7 @@ export class Coordinator {
         if (controller.signal.aborted) throw new Error('Conversation interrupted; your message is saved.');
         let applied = false;
         if (revision === this.state.intent.revision) {
-          this.apply(answer, source.id, message); applied = true;
+          this.apply(answer, sourceId, message); applied = true;
         } else this.notice({ role: 'system', text: 'Intent changed during this reply. The reply is saved; its proposed changes were held. /rethink reconciles the latest state.' });
         this.state.conversation.push({ id: randomUUID(), role: 'companion', text: answer.reply,
           timestamp: Date.now(), applied }); this.persist();
