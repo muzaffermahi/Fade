@@ -2,34 +2,11 @@ import { makeUniqueTitle, type PlanStore } from './plan.js';
 import type { StateStore } from './state.js';
 import type { Git } from './git.js';
 import { formatCompanionContext } from './agents/prompts.js';
+import { CompanionChat } from './companion-chat.js';
+import { applyBuilderEvent, makeReview, titleFromText, Toast, type BuildingView, type FadeView } from './view.js';
 import type {
-  BuilderAgent, BuilderEvent, BuildOutcome, Card, CompanionAgent, CompanionEvent, DoneEntry, Plan,
-  PlanApi, Review, Step, TranscriptEntry,
+  BuilderAgent, BuilderEvent, BuildOutcome, Card, CompanionAgent, DoneEntry, Plan, PlanApi, Review,
 } from './types.js';
-
-export interface BuildingView {
-  title: string;
-  steps: Step[];
-  action: string;
-  startedAt: number;
-  liveText: string;
-  lastMessage: string;
-  notes: string[];
-}
-
-export interface FadeView {
-  cards: Card[];
-  done: DoneEntry[];
-  reviews: Review[];
-  building: BuildingView | null;
-  builderLog: string[];
-  builderError?: string;
-  companion: TranscriptEntry[];
-  companionLive?: string;
-  companionBusy: boolean;
-  shippedToday: number;
-  toast?: string;
-}
 
 export interface FadeOptions {
   cwd: string;
@@ -40,16 +17,10 @@ export interface FadeOptions {
   companion: CompanionAgent;
 }
 
-const MAX_LOG = 200;
-const TOAST_MS = 3000;
+export { titleFromText };
+export type { BuildingView, FadeView };
 
-export function titleFromText(text: string): string {
-  const line = (text.split('\n').find(l => l.trim()) ?? 'Task').trim();
-  if (line.length <= 48) return line;
-  const cut = line.slice(0, 48);
-  const space = cut.lastIndexOf(' ');
-  return (space > 20 ? cut.slice(0, space) : cut).trim();
-}
+const MAX_LOG = 200;
 
 export class Fade implements PlanApi {
   private plan: Plan;
@@ -59,9 +30,7 @@ export class Fade implements PlanApi {
   private disposed = false;
   private builderLog: string[] = [];
   private builderError: string | undefined;
-  private companionLive: string | undefined;
-  private toast: string | undefined;
-  private toastTimer: NodeJS.Timeout | undefined;
+  private readonly toaster = new Toast(() => this.notify());
   private listeners = new Set<() => void>();
   private stopWatching: (() => void) | undefined;
   private readonly plans: PlanStore;
@@ -69,6 +38,7 @@ export class Fade implements PlanApi {
   private readonly git: Git;
   private readonly builder: BuilderAgent;
   private readonly companion: CompanionAgent;
+  private readonly chat: CompanionChat;
 
   constructor(opts: FadeOptions) {
     this.plans = opts.plans;
@@ -76,11 +46,11 @@ export class Fade implements PlanApi {
     this.git = opts.git;
     this.builder = opts.builder;
     this.companion = opts.companion;
+    this.chat = new CompanionChat(this.companion, this.state, () => this.notify(), () => formatCompanionContext(this.view()));
     this.state.load();
     this.plan = this.plans.load();
   }
 
-  // ---- observing ----
 
   onChange(fn: () => void): () => void {
     this.listeners.add(fn);
@@ -100,16 +70,15 @@ export class Fade implements PlanApi {
       building: this.building ? { ...this.building } : null,
       builderLog: [...this.builderLog],
       companion: [...this.state.data.companion],
-      companionBusy: this.companion.busy,
+      companionBusy: this.chat.busy,
       shippedToday: this.state.data.shipped.count,
     };
     if (this.builderError) view.builderError = this.builderError;
-    if (this.companionLive !== undefined) view.companionLive = this.companionLive;
-    if (this.toast) view.toast = this.toast;
+    if (this.chat.live !== undefined) view.companionLive = this.chat.live;
+    if (this.toaster.text) view.toast = this.toaster.text;
     return view;
   }
 
-  // ---- lifecycle ----
 
   /** Starts both agents; throws a human-readable error if either can't start. */
   async init(): Promise<void> {
@@ -128,13 +97,12 @@ export class Fade implements PlanApi {
   dispose(): void {
     this.disposed = true;
     this.stopWatching?.();
-    if (this.toastTimer) clearTimeout(this.toastTimer);
+    this.toaster.dispose();
     this.saveState();
     this.builder.dispose();
     this.companion.dispose();
   }
 
-  // ---- persistence helpers ----
 
   private savePlan(): void {
     try {
@@ -153,14 +121,7 @@ export class Fade implements PlanApi {
   }
 
   private showToast(text: string): void {
-    this.toast = text;
-    if (this.toastTimer) clearTimeout(this.toastTimer);
-    this.toastTimer = setTimeout(() => {
-      this.toast = undefined;
-      this.notify();
-    }, TOAST_MS);
-    this.toastTimer.unref();
-    this.notify();
+    this.toaster.show(text);
   }
 
   private reloadExternal(): void {
@@ -199,7 +160,6 @@ export class Fade implements PlanApi {
     return reviews.splice(index, 1)[0];
   }
 
-  // ---- the loop ----
 
   tick(): void {
     if (this.disposed || this.starting || this.building || this.builder.busy) return;
@@ -234,19 +194,8 @@ export class Fade implements PlanApi {
   }
 
   private onBuilderEvent(event: BuilderEvent): void {
-    const building = this.building;
-    if (event.type === 'log') {
-      this.builderLog.push(event.line);
-      if (this.builderLog.length > MAX_LOG) this.builderLog.splice(0, this.builderLog.length - MAX_LOG);
-    } else if (building) {
-      if (event.type === 'steps') building.steps = event.steps;
-      if (event.type === 'action') building.action = event.text;
-      if (event.type === 'text') building.liveText = event.text;
-      if (event.type === 'message') {
-        building.lastMessage = event.text;
-        building.liveText = '';
-      }
-    }
+    if (event.type === 'log') this.builderLog = [...this.builderLog, event.line].slice(-MAX_LOG);
+    else if (this.building) applyBuilderEvent(this.building, event);
     this.notify();
   }
 
@@ -277,21 +226,13 @@ export class Fade implements PlanApi {
   private finishBuild(original: Card, outcome: BuildOutcome): void {
     const card = this.takeBuildingCard(original);
     this.building = null;
+    let carryOn = true;
     if (outcome.kind === 'done' || outcome.kind === 'stuck') {
-      const stuck = outcome.kind === 'stuck';
-      const saved = this.checkpoint(stuck ? `fade: ${card.title} (partial)` : `fade: ${card.title}`);
+      const partial = outcome.kind === 'stuck' ? ' (partial)' : '';
+      const saved = this.checkpoint(`fade: ${card.title}${partial}`);
       card.state = 'review';
-      const review: Review = {
-        title: card.title,
-        summary: outcome.kind === 'done' ? outcome.summary : 'The Builder needs your answer.',
-        howToTry: outcome.kind === 'done' ? outcome.howToTry : '',
-        files: saved.files,
-        finishedAt: Date.now(),
-      };
-      if (outcome.kind === 'stuck') review.question = outcome.question;
-      if (saved.sha) review.sha = saved.sha;
       this.removeReview(card.title);
-      this.state.data.reviews.push(review);
+      this.state.data.reviews.push(makeReview(card.title, outcome, saved));
     } else if (outcome.kind === 'stopped') {
       this.checkpoint(`fade: ${card.title} (partial)`);
       this.demote(card, '> Stopped partway.');
@@ -300,14 +241,11 @@ export class Fade implements PlanApi {
       this.builderError = outcome.error;
       // NOTE: no automatic retry, and no ticking on: a broken setup would fail every ready card in turn.
       // Sending the Builder a task (or readying a card) resumes the queue.
-      this.savePlan();
-      this.saveState();
-      this.notify();
-      return;
+      carryOn = false;
     }
     this.savePlan();
     this.saveState();
-    this.tick();
+    if (carryOn) this.tick();
     this.notify();
   }
 
@@ -317,7 +255,6 @@ export class Fade implements PlanApi {
     this.moveToTop(card);
   }
 
-  // ---- human actions ----
 
   toggleReady(title: string): void {
     const card = this.find(title);
@@ -451,49 +388,12 @@ export class Fade implements PlanApi {
     await this.builder.stop();
   }
 
-  // ---- companion ----
-
-  private pushTranscript(entry: TranscriptEntry): void {
-    this.state.data.companion.push(entry);
-    this.saveState();
-  }
-
   sendToCompanion(text: string): void {
-    const clean = text.trim();
-    if (!clean) return;
-    this.pushTranscript({ role: 'you', text: clean });
-    const context = formatCompanionContext(this.view());
-    this.notify();
-    void this.runCompanion(clean, context);
+    this.chat.send(text);
   }
 
-  private async runCompanion(text: string, context: string): Promise<void> {
-    try {
-      await this.companion.send(text, context, e => this.onCompanionEvent(e));
-    } catch (error) {
-      this.onCompanionEvent({ type: 'error', text: messageOf(error) });
-    }
-    this.companionLive = undefined;
-    this.notify();
-  }
-
-  private onCompanionEvent(event: CompanionEvent): void {
-    if (event.type === 'text') this.companionLive = event.text;
-    if (event.type === 'message') {
-      this.companionLive = undefined;
-      if (event.text.trim()) this.pushTranscript({ role: 'companion', text: event.text });
-    }
-    if (event.type === 'card') {
-      const verb = event.action === 'added' ? '(draft)' : '(edited)';
-      this.pushTranscript({ role: 'card', text: `${event.title}  ${verb}` });
-    }
-    if (event.type === 'tool') this.pushTranscript({ role: 'tool', text: event.text });
-    if (event.type === 'error') this.pushTranscript({ role: 'error', text: `Companion: ${event.text}` });
-    this.notify();
-  }
-
-  async stopCompanion(): Promise<void> {
-    await this.companion.stop();
+  stopCompanion(): Promise<void> {
+    return this.chat.stop();
   }
 }
 

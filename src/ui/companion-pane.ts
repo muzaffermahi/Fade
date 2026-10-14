@@ -1,5 +1,5 @@
 import { Markdown, type Editor, type MarkdownTheme } from '@earendil-works/pi-tui';
-import type { FadeView } from '../loop.js';
+import type { FadeView } from '../view.js';
 import type { TranscriptEntry } from '../types.js';
 import { wordmark, compactMark } from './logo.js';
 import { editorBlock, paneHeader, viewport, withNewHint, type PaneOptions } from './pane.js';

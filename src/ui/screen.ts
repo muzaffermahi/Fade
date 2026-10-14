@@ -1,5 +1,5 @@
 import { truncateToWidth, visibleWidth, type Editor } from '@earendil-works/pi-tui';
-import type { FadeView } from '../loop.js';
+import type { FadeView } from '../view.js';
 import { builderPane } from './builder-pane.js';
 import { CompanionRenderer } from './companion-pane.js';
 import { compactMark } from './logo.js';

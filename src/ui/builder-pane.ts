@@ -1,5 +1,5 @@
 import { type Editor } from '@earendil-works/pi-tui';
-import type { FadeView } from '../loop.js';
+import type { FadeView } from '../view.js';
 import { editorBlock, paneHeader, viewport, withNewHint, type PaneOptions } from './pane.js';
 import { bold, c, clock, GLYPH, sanitize, spinnerFrame, wrap } from './theme.js';
 

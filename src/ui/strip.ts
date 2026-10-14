@@ -1,5 +1,5 @@
 import { visibleWidth } from '@earendil-works/pi-tui';
-import type { FadeView } from '../loop.js';
+import type { FadeView } from '../view.js';
 import type { Card } from '../types.js';
 import { bold, c, GLYPH, sanitize, spread } from './theme.js';
 

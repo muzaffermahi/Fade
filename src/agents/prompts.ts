@@ -1,4 +1,4 @@
-import type { FadeView } from '../loop.js';
+import type { FadeView } from '../view.js';
 import type { Card } from '../types.js';
 
 export const BUILDER_PROMPT = `
