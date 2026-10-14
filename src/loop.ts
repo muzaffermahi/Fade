@@ -18,8 +18,6 @@ export interface FadeOptions {
 }
 
 export { titleFromText };
-export type { BuildingView, FadeView };
-
 const MAX_LOG = 200;
 
 export class Fade implements PlanApi {
