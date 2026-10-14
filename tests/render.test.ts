@@ -142,3 +142,28 @@ test('streaming Companion text appears as it arrives and is then kept in the tra
   assert.match(text(h), /Want me to turn that into a card\?/);
   h.dispose();
 });
+
+test('accepting a card dissolves its title before it disappears', async () => {
+  const h = createHarness('review', 120, 40);
+  h.app.setFocus('plan');
+  h.app.handleInput('a');
+  assert.equal(h.fade.view().done.at(-1)?.title, 'Core notes app');
+  assert.match(text(h), /Shipped ✓/);
+  const rowsWith = (re: RegExp): number => text(h).split('\n').filter(l => re.test(l)).length;
+  assert.equal(rowsWith(/✓ Core notes app/), 2, 'dissolving row plus the new done entry');
+  await new Promise(resolve => setTimeout(resolve, 350));
+  assert.ok(text(h).split('\n').some(l => /✓ Core.*[▓▒░·]/.test(l)), 'dissolving mid-way');
+  await new Promise(resolve => setTimeout(resolve, 600));
+  assert.equal(rowsWith(/✓ Core/), 1, 'only the done entry is left');
+  h.dispose();
+});
+
+test('scrolling up in the Companion pane shows the "↓ new" hint, and sending jumps back', () => {
+  const h = createHarness('review', 80, 24);
+  h.app.setFocus('companion');
+  for (let i = 0; i < 12; i++) h.fade.sendToCompanion(`message number ${i}`);
+  assert.ok(!text(h).includes('↓ new'));
+  h.app.handleInput('\x1b[5~'); // page up
+  assert.match(text(h), /↓ new/);
+  h.dispose();
+});

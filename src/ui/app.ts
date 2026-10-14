@@ -269,7 +269,8 @@ export class FadeApp implements Component, Focusable {
   }
 
   private askRevise(title: string): void {
-    this.show(new TextPromptOverlay(this.tui, 'What should change?', note => {
+    const stuck = this.fade.view().reviews.find(r => r.title === title)?.question;
+    this.show(new TextPromptOverlay(this.tui, stuck ? 'Your answer' : 'What should change?', note => {
       this.close();
       this.fade.revise(title, note);
     }, () => this.close()));

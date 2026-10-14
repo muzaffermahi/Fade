@@ -72,8 +72,8 @@ function fit(lines: string[], width: number, height: number): string[] {
   return out;
 }
 
-function stripHeight(view: FadeView, rows: number): number {
-  const wanted = 1 + Math.max(1, view.cards.length) + Math.min(3, view.done.length);
+function stripHeight(view: FadeView, rows: number, fading: number): number {
+  const wanted = 1 + Math.max(1, view.cards.length + fading) + Math.min(3, view.done.length);
   return Math.max(4, Math.min(Math.floor(rows * 0.4), wanted));
 }
 
@@ -87,9 +87,9 @@ export function renderScreen(
   const wide = width >= WIDE_WIDTH;
   const rule = c.faint('─'.repeat(width));
   const planOpen = wide && st.focus === 'plan';
-  const strip = planOpen ? planLines(view, st.selected, st.fading, width, stripHeight(view, rows), st.now)
+  const strip = planOpen ? planLines(view, st.selected, st.fading, width, stripHeight(view, rows, st.fading.length), st.now)
     : stripLines(view, st.focus === 'plan', st.fading, width, st.now);
-  const stripRows = planOpen ? stripHeight(view, rows) : 2;
+  const stripRows = planOpen ? stripHeight(view, rows, st.fading.length) : 2;
   const top = wide ? [header(meta, width)] : [header(meta, width), tabs(view, st.focus, st.now)];
   // The panes' editors end in their own rule, so only the plan list needs a separate one.
   const closing = !wide && st.focus === 'plan' ? [rule] : [];
