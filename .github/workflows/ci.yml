@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [main, rebuild]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Configure git for tests
+        run: |
+          git config --global user.name "Fade CI"
+          git config --global user.email "ci@fade.local"
+      - run: node node_modules/typescript/bin/tsc --noEmit -p tsconfig.test.json
+      - run: node --import tsx --test tests/*.test.ts
+      - run: node node_modules/typescript/bin/tsc -p tsconfig.json
+      - run: node dist/cli.js --help
