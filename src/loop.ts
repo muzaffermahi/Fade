@@ -56,6 +56,7 @@ export class Fade implements PlanApi {
   private building: BuildingView | null = null;
   private lostBuildingCard: Card | undefined;
   private starting = false;
+  private disposed = false;
   private builderLog: string[] = [];
   private builderError: string | undefined;
   private companionLive: string | undefined;
@@ -125,9 +126,12 @@ export class Fade implements PlanApi {
   }
 
   dispose(): void {
+    this.disposed = true;
     this.stopWatching?.();
     if (this.toastTimer) clearTimeout(this.toastTimer);
     this.saveState();
+    this.builder.dispose();
+    this.companion.dispose();
   }
 
   // ---- persistence helpers ----
@@ -198,7 +202,7 @@ export class Fade implements PlanApi {
   // ---- the loop ----
 
   tick(): void {
-    if (this.starting || this.building || this.builder.busy) return;
+    if (this.disposed || this.starting || this.building || this.builder.busy) return;
     const card = this.plan.cards.find(c => c.state === 'ready');
     if (!card) return;
     this.starting = true;
@@ -273,7 +277,6 @@ export class Fade implements PlanApi {
   private finishBuild(original: Card, outcome: BuildOutcome): void {
     const card = this.takeBuildingCard(original);
     this.building = null;
-    let tickNext = true;
     if (outcome.kind === 'done' || outcome.kind === 'stuck') {
       const stuck = outcome.kind === 'stuck';
       const saved = this.checkpoint(stuck ? `fade: ${card.title} (partial)` : `fade: ${card.title}`);
@@ -292,15 +295,19 @@ export class Fade implements PlanApi {
     } else if (outcome.kind === 'stopped') {
       this.checkpoint(`fade: ${card.title} (partial)`);
       this.demote(card, '> Stopped partway.');
-      tickNext = false; // NOTE: a stop pauses the Builder until the human readies or sends something.
     } else {
       this.demote(card, `> Failed: ${outcome.error}`);
       this.builderError = outcome.error;
-      tickNext = false; // NOTE: no automatic retry, and no cascade of failures through every ready card.
+      // NOTE: no automatic retry, and no ticking on: a broken setup would fail every ready card in turn.
+      // Sending the Builder a task (or readying a card) resumes the queue.
+      this.savePlan();
+      this.saveState();
+      this.notify();
+      return;
     }
     this.savePlan();
     this.saveState();
-    if (tickNext) this.tick();
+    this.tick();
     this.notify();
   }
 

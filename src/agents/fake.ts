@@ -32,6 +32,7 @@ export class FakeBuilder implements BuilderAgent {
   private pause(ms: number): Promise<void> {
     return new Promise(resolve => {
       const timer = setTimeout(resolve, Math.max(0, ms / this.speed));
+      timer.unref();
       this.wake = () => {
         clearTimeout(timer);
         resolve();
