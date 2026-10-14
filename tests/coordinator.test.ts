@@ -29,7 +29,12 @@ class Fake implements Agents {
     this.buildEvents.push(emit);
     const result = deferred<BuilderResult>(); this.results.push(result);
     signal.addEventListener('abort', () => result.reject(new Error('cancelled')), { once: true });
-    return result.promise;
+    const outcome = await result.promise;
+    if (outcome.status === 'completed') for (const value of slice.plan.acceptanceChecks ?? []) {
+      const command = typeof value === 'string' ? value : value.kind === 'executable' ? value.command : undefined;
+      if (command) { emit({ type: 'tool_execution_start', toolName: 'bash', toolCallId: 'fixture-check', args: { command } }); emit({ type: 'tool_execution_end', toolName: 'bash', toolCallId: 'fixture-check', isError: false, result: { content: [{ type: 'text', text: 'Observed synthetic fixture check result' }] } }); }
+    }
+    return outcome;
   }
   async converse(_state: unknown, message: string) {
     if (!message) return this.reconciliationReply;
@@ -41,12 +46,17 @@ function setup() {
   const workspace = mkdtempSync(join(tmpdir(), 'fade-test-'));
   const store = new Store(workspace), fake = new Fake(), notices: Notice[] = [];
   const c = new Coordinator(Coordinator.initial(workspace, 'Make a reading notebook'), store, fake, notice => notices.push(notice));
+  // Existing-work fixture: the product itself starts with no slice (F-INTENT).
+  const sourceId = c.accept('Implement a reading notebook');
+  const receipt = c.state.inputs[0]; if (receipt) receipt.status = 'processed';
+  c.state.intent.decisions.push({ id: sourceId, key: 'foundation', text: 'Implement notebook', quote: 'Implement a reading notebook', sourceId, kind: 'decision', status: 'active' });
+  c.state.slices.push({ id: sourceId, status: 'ready', plan: { title: 'Notebook foundation', goal: 'Implement notebook', requirements: ['Local notebook'], acceptanceChecks: ['node --check notebook.mjs'], decisionKeys: ['foundation'], dependencies: [], assumptions: [], ready: true } });
   return { c, fake, store, notices, workspace };
 }
-function next(c: Coordinator, decisionKeys: string[] = []): NonNullable<CompanionReply['next']> {
+function next(c: Coordinator, decisionKeys: string[] = ['foundation']): NonNullable<CompanionReply['next']> {
   const current = c.state.slices.find(s => s.status === 'running');
   return { title: 'Private notes', goal: 'Add local private notes', requirements: ['Keep notes locally'],
-    decisionKeys, dependencies: current ? [current.id] : [], assumptions: ['storage'], ready: true };
+    acceptanceChecks: ['node test.mjs'], decisionKeys, dependencies: current ? [current.id] : [], assumptions: ['storage'], ready: true };
 }
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
@@ -57,11 +67,11 @@ test('FADE-01: genuine overlap, stable active snapshot, automatic A to B handoff
   ], openQuestions: [], next: next(c, ['privacy']) };
   await c.talk('I definitely want local notes.');
   assert.equal(fake.builds.length, 1); // Conversation completed while A is still genuinely running.
-  assert.equal(fake.builds[0]?.snapshot?.intent.decisions.length, 0);
+  assert.equal(fake.builds[0]?.snapshot?.intent.decisions.length, 1);
   assert.equal(c.state.slices[0]?.status, 'running');
   fake.results[0]?.resolve(complete); await tick();
   assert.equal(fake.builds.length, 2);
-  assert.equal(fake.builds[1]?.snapshot?.intent.decisions[0]?.key, 'privacy');
+  assert.ok(fake.builds[1]?.snapshot?.intent.decisions.some(d => d.key === 'privacy'));
   assert.equal(fake.builds[1]?.snapshot?.requirements[0], 'Keep notes locally');
   assert.equal(c.state.slices[0]?.status, 'completed'); // Catch stale running-object race.
   fake.results[1]?.resolve(complete); await c.idle();
@@ -73,14 +83,14 @@ test('FADE-02: tentative thought cannot become a binding requirement', async () 
   const { c, fake } = setup();
   fake.reply.evidence = [{ key: 'offline', text: 'Explore offline support', quote: 'I wonder if it should work offline', kind: 'constraint' }];
   await c.talk('I wonder if it should work offline');
-  assert.equal(c.state.intent.decisions[0]?.kind, 'tentative');
+  assert.equal(c.state.intent.decisions.at(-1)?.kind, 'tentative');
 });
 test('FADE-03: fabricated quotations and malformed JSON are rejected; raw human thinking survives', async () => {
   const { c, fake } = setup();
   fake.reply.evidence = [{ key: 'offline', text: 'Offline required', quote: 'never said', kind: 'constraint' }];
   await c.talk('Maybe local data would be useful');
-  assert.equal(c.state.intent.decisions.length, 0);
-  assert.equal(c.state.conversation[0]?.text, 'Maybe local data would be useful');
+  assert.equal(c.state.intent.decisions.length, 1);
+  assert.equal(c.state.conversation.at(-1)?.text, 'Maybe local data would be useful');
   assert.throws(() => parseResponse(CompanionSchema, ''), SyntaxError);
   assert.throws(() => validate(CompanionSchema, { reply: '<script>' }));
 });
@@ -98,10 +108,10 @@ test('FADE-04: conflicting decisions hold briefs; explicit reversal preserves hi
   const fresh = setup();
   fresh.fake.reply.evidence = [{ key: 'storage', text: 'Local storage', quote: 'Use local storage', kind: 'decision' }];
   await fresh.c.talk('Use local storage');
-  const previous = fresh.c.state.intent.decisions[0]; assert.ok(previous);
+  const previous = fresh.c.state.intent.decisions.find(d => d.key === 'storage'); assert.ok(previous);
   fresh.fake.reply.evidence = [{ key: 'storage', text: 'File storage', quote: 'Replace that with file storage', kind: 'decision', replaces: previous.id }];
   await fresh.c.talk('Replace that with file storage');
-  assert.equal(fresh.c.state.intent.decisions[0]?.status, 'superseded');
+  assert.equal(fresh.c.state.intent.decisions.find(d => d.id === previous.id)?.status, 'superseded');
   assert.equal(fresh.c.state.history.length, 2);
 });
 test('FADE-05: discoveries hold affected briefs while unaffected work continues', async () => {
@@ -152,14 +162,16 @@ test('FADE-10: persistence, crash recovery, partial journal append, editing and 
   const { c, store, workspace } = setup(); store.lock(); assert.throws(() => new Store(workspace).lock(), /already open/);
   const running = c.state.slices[0]; assert.ok(running); running.status = 'running'; store.save(c.state);
   appendFileSync(join(store.directory, 'journal.jsonl'), '{"broken":');
-  const recovered = store.load(); assert.ok(recovered);
-  const fresh = new Coordinator(recovered, store, new Fake()); fresh.recover();
+  store.close(); // Simulate process loss: an active Store must detect external journal changes.
+  const restarted = new Store(workspace); restarted.lock();
+  const recovered = restarted.load(); assert.ok(recovered);
+  const fresh = new Coordinator(recovered, restarted, new Fake()); fresh.recover();
   assert.equal(recovered.mode, 'paused'); assert.equal(recovered.slices[0]?.status, 'interrupted');
-  const editPath = store.prepareIntentEdit(recovered);
+  const editPath = restarted.prepareIntentEdit(recovered);
   const edit = structuredClone(recovered.intent); edit.vision = 'Human edited vision'; writeFileSync(editPath, JSON.stringify(edit));
-  store.save(recovered); // Background writes must not clobber an in-progress human edit.
-  fresh.editIntent(store.readIntent()); assert.equal(recovered.intent.vision, 'Human edited vision');
-  assert.throws(() => fresh.editIntent(edit), /Stale/); store.close();
+  restarted.save(recovered); // Background writes must not clobber an in-progress human edit.
+  fresh.editIntent(restarted.readIntent()); assert.equal(recovered.intent.vision, 'Human edited vision');
+  assert.throws(() => fresh.editIntent(edit), /Stale/); restarted.close();
 });
 test('FADE-11: canonical paths reject traversal, protected state and symlink escape', async () => {
   const { workspace } = setup(); const outside = mkdtempSync(join(tmpdir(), 'fade-outside-'));
@@ -176,8 +188,8 @@ test('FADE-13: discovery reconciliation preserves authorship and can continue wi
     evidence: [], openQuestions: [], next: { ...next(c), assumptions: ['file-storage'] } };
   fake.results[0]?.resolve({ ...complete, discoveries: [{ summary: 'Use files instead of old storage', affects: ['storage'] }] });
   await tick(); await tick(); assert.equal(fake.builds.length, 2);
-  assert.equal(c.state.conversation.filter(m => m.role === 'human').length, 1);
-  assert.equal(c.state.intent.decisions.length, 0);
+  assert.equal(c.state.conversation.filter(m => m.role === 'human').length, 2);
+  assert.equal(c.state.intent.decisions.length, 1);
   fake.results[1]?.resolve(complete); await c.idle();
 });
 test('FADE-14: the automatic slice limit prevents an uncontrolled execution loop', async () => {

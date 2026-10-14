@@ -3,38 +3,15 @@ import { createInterface, clearLine, cursorTo } from 'node:readline';
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { spawn } from 'node:child_process';
-import { Coordinator, errorText, type Notice } from './coordinator.js';
-import { Store, renderIntent } from './store.js';
+import { errorText, type Notice } from './coordinator.js';
+import { FadeApp } from './app.js';
+import { Store } from './store.js';
 import { PiAgents, type PiOptions } from './pi.js';
-import { builderReport, reports, executionLog } from './reports.js';
+import { validate, RunLimitSchema } from './contracts.js';
+import { commandHelp, routeInput } from './commands.js';
+import { terminalText } from './terminal-text.js';
 
-const HELP = `Fade — a tool for the mind
-
-Write to the Companion while Pi builds. No minimum length, no tickets.
-
-  /write               Compose across lines; /send submits, /cancel keeps silence
-  /editor              Write in your configured editor (FADE_EDITOR or VISUAL)
-  /status              Present, future, and recent outcomes
-  /builder [message]   Inspect the Builder or send a saved note
-  /companion <message> Talk to the Companion explicitly
-  /reports             Read both agents' reports and checks
-  /intent              Read Living Intent and see its editable JSON path
-  /reload              Import your edited intent-edit.json, with a revision check
-  /rethink             Reconcile discoveries or retry a failed conversation
-  /pause /stop /resume Control the Builder; conversation stays available
-  /redirect <thought>  Explicitly interrupt and revise direction
-  /log                 Recent real Pi execution events
-  /history             Your conversation
-  /models              Available Pi provider/model IDs
-  /preference design|technical
-  /quit                Save and leave
-
-Launch: Fade [--workspace <directory>] [--idea "your idea"]
-The current directory is your workspace by default. Launch there again to resume.
-Models: --builder provider/model --companion provider/model
-Only local trusted code should be executed. Pi shell commands and generated code
-run with your OS permissions.
-`;
+const HELP = `Fade — a tool for the mind\n\n${commandHelp('plain')}\n\nLaunch: Fade [--workspace <directory>] [--idea "your idea"]\nModels: --builder provider/model --companion provider/model\nRun: --run-limit 1..20 (default four). Local trusted code runs with your OS permissions.\n`;
 
 function flag(name: string): string | undefined {
   const index = process.argv.indexOf(name);
@@ -51,50 +28,45 @@ export async function runPlain(): Promise<void> {
   const companion = flag('--companion') ?? process.env.FADE_COMPANION_MODEL;
   mkdirSync(workspace, { recursive: true });
   const store = new Store(workspace); store.lock();
-  let state;
-  try { state = store.load(); } catch (error) { store.close(); throw error; }
   const terminal = createInterface({ input: process.stdin, output: process.stdout, terminal: Boolean(process.stdin.isTTY) });
   let quitting = false, inputEnded = false, composing = false, draft: string[] = [], pending = 0;
-  let coordinator: Coordinator | undefined;
   const show = ({ role, text }: Notice) => {
     if (quitting) return;
     if (process.stdout.isTTY) { clearLine(process.stdout, 0); cursorTo(process.stdout, 0); }
-    const safe = text.replace(/[\u001b\u0000-\u0008\u000b-\u001f\u007f]/g, '');
+    const safe = terminalText(text, 500000);
     console.log(`\n${role === 'companion' ? 'Companion' : role === 'builder' ? '  Pi' : 'Fade'}\n${safe}\n`);
     terminal.prompt(true);
   };
   const options: PiOptions = {};
+  const limit = flag('--run-limit') ?? process.env.FADE_RUN_LIMIT;
+  if (limit !== undefined) options.runLimit = validate(RunLimitSchema, Number(limit));
   if (builder) options.builderModel = builder;
   if (companion) options.companionModel = companion;
-  const initialize = (idea: string) => {
-    if (!idea.trim()) throw new Error('Start with something you want to create.');
-    state = Coordinator.initial(workspace, idea);
-    const agents = new PiAgents(store, state, options);
-    coordinator = new Coordinator(state, store, agents, show);
-    store.save(state); coordinator.start();
-    void coordinator.talk(idea);
-  };
+  let app: FadeApp;
+  try { app = new FadeApp(store, options, show); } catch (error) { store.close(); terminal.close(); throw error; }
+  const state = app.coordinator?.state;
   console.log(`\nFade\nA tool for the mind. Think about the future while Pi builds the present.\n\nWorkspace: ${workspace}\n/help for controls. /write for long-form writing.\n`);
   terminal.setPrompt('you › ');
   if (state) {
-    coordinator = new Coordinator(state, store, new PiAgents(store, state, options), show);
-    coordinator.recover();
-    console.log('Recovered your project, paused. /resume restarts implementation.\n');
-    const last = state.conversation.filter(m => m.role === 'companion').at(-1);
+    console.log('Recovered your project, paused. /continue restarts implementation.\n');
+    const last = app.history().filter(m => m.role === 'companion').at(-1);
     if (last) console.log(`Companion\n${last.text}\n`);
-  } else if (initialIdea) initialize(initialIdea);
+  } else if (initialIdea) void app.submit(initialIdea);
   else console.log('What do you want to create? Your first message starts the project.\n');
   const quit = async () => {
     if (quitting) return;
     quitting = true;
-    if (coordinator) await coordinator.close(); else store.close();
+    await app.close();
     terminal.close();
   };
   const talk = (text: string) => {
-    if (!coordinator) initialize(text);
-    else void coordinator.talk(text).catch(error => {
-      draft = text.split('\n'); show({ role: 'system', text: errorText(error) + ' Use /write to recover your draft.' });
-    });
+    let acceptedId: string | undefined;
+    const failed = (error: unknown) => {
+      if (!acceptedId) draft = text.split('\n');
+      app.report(acceptedId ? 'uncertain_delivery' : 'acceptance_rejected', 'companion', acceptedId ?? 'plain-input',
+        errorText(error) + (acceptedId ? ' Input remains saved; inspect /inputs.' : ' Use /write to recover your draft.'), acceptedId ? ['inputs', 'diagnostics'] : ['edit-draft'], acceptedId);
+    };
+    try { void app.submit(text, {}, id => { acceptedId = id; }).catch(failed); } catch (error) { failed(error); }
   };
   async function line(input: string): Promise<void> {
     if (quitting) return;
@@ -104,8 +76,12 @@ export async function runPlain(): Promise<void> {
       else draft.push(input);
       return;
     }
-    const command = input.trim();
+    const route = routeInput(input, 'plain');
+    if (route.kind === 'rejected') { draft = input.split('\n'); app.report('invalid_command', 'companion', 'plain-command', route.error + ' Draft retained; /write recovers it.', ['edit-draft']); return; }
+    if (route.kind === 'menu') { console.log(HELP); return; }
+    const command = route.text.trim();
     if (!command) return;
+    if (route.kind === 'command' && route.deprecation) show({ role: 'system', text: route.deprecation });
     if (command === '/quit') { await quit(); return; }
     if (command === '/help') { console.log(HELP); return; }
     if (command === '/write') { composing = true; terminal.setPrompt('… '); console.log('Write freely. /send submits; /cancel keeps your draft.'); if (draft.length) console.log(draft.join('\n')); return; }
@@ -126,47 +102,26 @@ export async function runPlain(): Promise<void> {
       talk(readFileSync(file, 'utf8')); return;
     }
 
-    if (!coordinator) { if (command.startsWith('/')) throw new Error('Start a project with your idea first.'); talk(input); return; }
-    const c = coordinator;
-    if (command === '/builder') { console.log(builderReport(c.state)); return; }
-    if (command.startsWith('/builder ')) { await c.messageBuilder(command.slice(9)); return; }
-    if (command === '/reports') { console.log(reports(c.state)); return; }
-    if (command.startsWith('/companion ')) { talk(command.slice(11)); return; }
-    if (command === '/pause' || command === '/stop') { await c.pause(command === '/stop'); return; }
-    if (command === '/resume') { c.resume(); return; }
-    if (command === '/intent') { console.log(renderIntent(c.state)); console.log(`Edit ${store.prepareIntentEdit(c.state)}, then /reload.`); return; }
-    if (command === '/reload') { c.editIntent(store.readIntent()); return; }
-    if (command === '/rethink') { talk('Reconcile our latest intent, conversation, and implementation discoveries. Preserve what I have said; develop the next useful slice only if it is sufficiently clear.'); return; }
-    if (command.startsWith('/redirect ')) { await c.redirect(command.slice(10)); return; }
-    if (command === '/status') {
-      console.log(`${c.state.mode}; ${c.state.remainingSlices} slices remaining in this run\n` + c.state.slices.slice(-8).map(s => `${s.status} · ${s.plan.title}\n${s.result?.summary ?? s.plan.goal}`).join('\n\n')); return;
-    }
-    if (command === '/history') { console.log(c.state.conversation.map(m => `${m.role}\n${m.text}\n`).join('\n')); return; }
-    if (command === '/log') {
-      try { console.log(executionLog(readFileSync(join(store.directory, 'builder-events.jsonl'), 'utf8'))); }
-      catch { console.log('No execution events yet.'); } return;
-    }
     if (command === '/models') {
-      if (c.agents instanceof PiAgents) console.log((await c.agents.models()).join('\n') || 'No authenticated models. Configure Pi credentials.'); return;
+      const agents = app.coordinator?.agents;
+      if (agents instanceof PiAgents) console.log((await agents.models()).join('\n') || 'No authenticated models. Configure Pi credentials.'); return;
     }
-    if (command.startsWith('/preference ')) {
-      const value = command.slice(12);
-      if (value !== 'design' && value !== 'technical') throw new Error('Use /preference design or technical.');
-      c.state.preference = value; store.save(c.state); console.log(`Conversation preference: ${value}`); return;
+    if (route.kind === 'command') {
+      await app.command(route.command.name, route.args); return;
     }
-    if (command.startsWith('/')) throw new Error('Unknown command. /help lists controls.');
     talk(input);
   }
+  let commands = Promise.resolve();
   terminal.on('line', input => {
     pending++;
-    void line(input).catch(error => show({ role: 'system', text: errorText(error) })).finally(() => { pending--; if (!quitting) terminal.prompt(true); });
+    commands = commands.then(() => line(input)).catch(error => app.report('invalid_command', 'companion', 'plain-command', errorText(error), ['diagnostics'])).finally(() => { pending--; if (!quitting) terminal.prompt(true); });
   });
   terminal.on('SIGINT', () => { void quit(); });
   process.once('SIGTERM', () => { void quit(); });
   // Piped input may end before async handlers: let accepted conversations finish, then stop.
   terminal.once('close', () => { inputEnded = true; if (!quitting) void (async () => {
     while (pending) await new Promise(resolvePending => setTimeout(resolvePending, 20));
-    await coordinator?.idle(); await quit();
+    await app.idle(); await quit();
   })(); });
   terminal.prompt();
 }

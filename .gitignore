@@ -5,3 +5,5 @@ projects/
 .env
 *.log
 coverage/
+releases/
+output/

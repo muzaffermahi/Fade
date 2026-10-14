@@ -36,9 +36,9 @@ try {
   const completed = bridge.app.coordinator?.state.slices.filter(s => s.status === 'completed') ?? [];
   if (!completed.length) throw new Error('Builder did not finish.');
   if (!notes.some(n => n.status === 'received')) throw new Error(`No Builder receipt: ${JSON.stringify(notes)}`);
-  const report = bridge.runtime.session.messages.findLast(m => m.role === 'custom' && m.customType === 'fade-note' && String(m.content).includes('Checks reported'));
-  if (!report) throw new Error('Readable report did not reach the native transcript.');
+  const report = bridge.app.inspect('reports');
+  if (!report.includes('Checks reported') || !report.includes('Observed results')) throw new Error('Inspection report lacks attributed claims or observed evidence.');
   console.log(`\nBuilder notes: ${notes.map(n => `${n.id.slice(0, 8)} ${n.status}`).join(', ')}`);
   console.log(`Builder report: ${completed.at(-1)?.result?.summary}`);
   console.log('LIVE EXCHANGES PASS: three real Companion exchanges, concurrent Builder steering receipt, readable reports, and tested implementation.');
-} finally { clearTimeout(timeout); await bridge.app.close(); await bridge.runtime.dispose(); }
+} finally { clearTimeout(timeout); bridge.disposeView(); await bridge.app.close(); await bridge.runtime.dispose(); }

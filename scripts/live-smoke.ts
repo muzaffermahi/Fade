@@ -12,15 +12,12 @@ if (!builderModel || !companionModel) throw new Error('Set FADE_BUILDER_MODEL an
 const workspace = mkdtempSync(join(tmpdir(), 'fade-live-'));
 const store = new Store(workspace); store.lock();
 const state = Coordinator.initial(workspace, 'Build a tiny dependency-free Node terminal notebook.');
-const first = state.slices[0];
-if (!first) throw new Error('Missing foundation slice');
-first.plan = { title: 'Notebook foundation', goal: 'Create notebook.mjs exporting addNote(notes,text) returning a new array, and README.md. Verify with node --check notebook.mjs. No dependencies. Do not yet implement search.',
-  requirements: ['Create notebook.mjs and README.md only.'], decisionKeys: [], dependencies: [], assumptions: [], ready: true };
 const options = { builderModel, companionModel };
 const c = new Coordinator(state, store, new PiAgents(store, state, options), notice => console.log(`${notice.role}: ${notice.text}`));
 console.log(`Live workspace: ${workspace}`);
 try {
-  c.start();
+  await c.talk('Implement notebook.mjs exporting addNote(notes,text) returning a new array, and README.md. Verify with node --check notebook.mjs. No dependencies. Create only these two files. Do not yet implement search. Propose a ready bounded foundation slice with settled decision references and acceptanceChecks.');
+  if (!state.slices.some(s => s.status === 'running')) throw new Error('Supported request did not activate the foundation while Companion remained available.');
   await c.talk('I definitely want the notebook to stay simple and local. While the foundation is being built, the next slice should add searchNotes(notes, query) to notebook.mjs with case-insensitive substring matching, returning only matching notes. Include a dependency-free Node test and actually run it. Do not add anything else. For me this should feel like retrieving a thought, not managing a database.');
   await c.idle();
   const completed = state.slices.filter(s => s.status === 'completed');

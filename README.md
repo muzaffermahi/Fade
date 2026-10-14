@@ -1,123 +1,130 @@
 # Fade
 
-**A tool for the mind.** Think about your software's future while Pi builds its present.
+**A tool for the mind.** Develop the future with a Companion while Builder implements settled work.
 
-Fade extends Pi with a thoughtful Companion, source-backed Living Intent, and a parallel Builder that implements bounded slices from stable snapshots. The Companion is the real Pi session: it can inspect files, search the project, execute commands, and make requested edits. Ordinary prompts automatically enter Fade's loop.
+This is the private **1.0.0-rc.2** candidate of **@muzaffermahi/fade**. Both `Fade` and `fade` are executable aliases. Publication and production qualification remain pending. Full packaged cloud/local Builder runs, clean Windows/macOS/Linux environments, physical terminal/IME walkthroughs and unfamiliar-user results still need passing evidence.
 
-This independent project lives in `Fade`. The product, folder, global command, and public GitHub repository are named **Fade**. The older parent project is preserved.
+## Install and start
 
-## Install and run
+Requires Node **22.19 or newer** and Bash; Git for Windows supplies Bash. Install the exact local archive whose SHA-256 you verified:
 
-Requires Node 22.19 or newer and Bash (Git for Windows provides Bash). Development uses Node 24.
-
-```powershell
-npm ci
-node node_modules/typescript/bin/tsc -p tsconfig.json
-npm link --ignore-scripts
+```text
+npm install --global /absolute/path/muzaffermahi-fade-1.0.0-rc.2.tgz
+Fade --help
+Fade --workspace /path/to/project
 ```
 
-Open a terminal in your project and run:
+The launch directory is the workspace. `--plain` selects the line interface; piped input uses it automatically. See [install and upgrade](docs/install.md) and [troubleshooting](docs/troubleshooting.md). The unscoped npm package `fade` is unrelated; do not install it as this product.
 
-```powershell
-Fade
-```
+## Two roles, one workspace
 
-The launch directory is the workspace. On Windows, `fade` also works. Use `Fade --workspace <directory>` or `--idea "your idea"` when needed. Piped input uses the line interface; `--plain` selects it explicitly.
+Companion explores ideas, inspects files and develops a source-backed future brief. Builder implements a concrete human request with settled references and declared acceptance checks. Exploration starts no implementation. Active briefs remain fixed; `/redirect` explicitly stops and replaces a direction. One future slice waits for observed acceptance of its dependencies.
 
-## Pi interface and capabilities
+The focused composer captures recipient, session, mode and images before acceptance. During active work, Builder input is a durable steering/follow-up note: saved, queued and received are distinct. Received means inclusion in Pi context, not proof the note was followed. Companion stays read-only while implementation continues.
 
-Fade uses **Pi 1.0.4's actual InteractiveMode**, with a Fade header. The Companion streams natural prose and real tool calls through that session. It retains Pi's read, bash, edit, and write tools; configured extra tools; extensions and packages; skills; prompt templates; project instructions; MCP; tool search; and codemode. Discovery uses Pi's ordinary configuration and resource loader.
+Fade uses Pi **1.0.4** editors, resources, model selection and native dialogs. Alt+1/2/3 selects Builder/Companion/Fade; Tab accepts an open completion or switches panes. At narrow widths the focused conversation is shown with shared Builder status. PageUp/PageDown scrolls the focused history; reading position survives updates, resizing and native dialog return. Ctrl+O expands observed tool cards; Ctrl+Alt+I opens attachment removal.
 
-Use the native editor, history, themes, keybindings, image input, `/settings`, `/model`, `/login`, `/new`, `/resume`, `/tree`, `/fork`, `/compact`, `/reload`, and shell input (`!` and `!!`). Pi's session context, tool results, and token counters describe the actual Companion. Native sessions are saved under `.fade/sessions/conversation`; the latest session resumes on launch. Session changes preserve the workspace's Living Intent, and changing to a different workspace mounts that workspace's Fade state. Recovery leaves implementation paused; `/continue` restarts it.
+Escape closes an overlay/completion first, then interrupts the focused role. Ctrl+C interrupts busy focused work; a second within one second exits. At idle it exits. Empty Ctrl+D exits; with content it keeps forward-delete. Finite native dialogs return to saved panes. `/pi` stays native until `/fade`. Explicit human `!` shell operations stop Builder before execution; use `/fade` to restore the panes if still native.
 
-The Companion uses Pi tools when you ask it to read or inspect something. It does not require you to paste readable files. For an existing project or an inspection request, the initial Builder inspects before acting and does not invent a new skeleton. The concurrent Builder still receives a bounded immutable brief; the Companion is instructed to avoid overlapping its edits.
+Role drafts survive rejected input. New PNG/JPEG/WebP attachments support at most 20 images, 15 MiB each and 30 MiB decoded total. Text sends support 20,000 characters. Unsupported model/image combinations retain the draft for correction.
 
 ## Models and credentials
 
-Fade follows Pi's configured model selection, `~/.pi/agent/auth.json`, and `models.json`. It has **no preferred provider or model**. `/model` changes future turns for both roles unless you explicitly override the Builder. Authentication, thinking levels, and provider configuration use Pi's normal mechanisms.
+Reuse Pi's configured models and credentials; Fade has no preferred provider/model. Select with native `/model` and `/login`, or explicitly override:
 
-Optional role overrides:
-
-```powershell
-Fade --builder <provider/model-id> --companion <provider/model-id>
+```text
+Fade --builder provider/model-id --companion provider/model-id
 ```
 
-`FADE_BUILDER_MODEL` and `FADE_COMPANION_MODEL` provide the same overrides. Each OpenCode Go session supplies its routing header. DeepSeek V4.1 Flash is selected explicitly for recorded cloud tests only.
+`FADE_BUILDER_MODEL` and `FADE_COMPANION_MODEL` are equivalent. Provider availability, model behavior and loaded local context limits require their own checks. Configured credentials do not establish reachability. `/doctor` performs local checks without contacting a provider.
 
-## Talk to both roles
+## Controls
 
-Ordinary chat goes to the Companion. Use `/builder <message>` to address the current Builder through Pi's normal steering queue. Notes are saved before delivery; `pending`, `queued`, and `received` are distinct receipts. Received means the note entered the Builder's Pi context. If there is no active Builder, it waits for the next slice. Unreceived notes survive interruption and recovery. Notes do not silently change the fixed brief; `/redirect` is the explicit scope change.
+The following list is generated from the shared command catalog.
 
-`/builder` alone shows the current work and receipts. `/reports` shows the latest Companion reply plus Builder summaries, reported checks, and findings. `/log` shows actual tool operations and results without transport JSON. Builder completion reports also appear automatically in the native transcript. `/companion <message>` is an explicit alias for ordinary chat.
+<!-- GENERATED_COMMANDS -->
+```text
+/builder [message] — Inspect Builder or send a durable note
+/companion [message] — Talk to Companion explicitly
+/intent — Inspect and edit Living Intent
+/changes [slice-id] — Inspect observed workspace changes
+/log [query] — Search and page observed execution output
+/status — Inspect activity, limits and receipts
+/inputs — Inspect durable input receipts
+/reports — Inspect outcomes, claims and evidence
+/history — Inspect saved conversation
+/help — Search Fade commands and Pi capabilities
+/pause — Pause Builder and retain partial work
+/stop — Stop automatic Builder continuation
+/accept-check <slice-id> <check-id> pass|fail <evidence> — Record a human inspection result
+/continue — Continue paused Builder work
+/redirect <direction> — Interrupt Builder and develop new direction
+/rethink — Reconcile intent and implementation discoveries
+/apply-intent — Import revision-checked intent edits
+/preference design|technical — Set conversation preference
+/retry-input <receipt-id> — Explicitly retry a saved receipt
+/edit-input <receipt-id> <text> — Edit an undelivered receipt
+/cancel-input <receipt-id> — Cancel an undelivered receipt
+/diagnostics — Inspect routine resource/update diagnostics
+/pi — Open native Pi controls; /fade returns
+/fade — Return to Fade split workspace
+/doctor — Inspect local readiness and recovery without a provider call
+/bug-report [export [relative-path.json]] — Preview metadata or export a local file after Builder stops
+/settings — Open Pi settings
+/model <provider/model> — Select role conversation model
+/tree — Navigate Pi session tree
+/thinking <level> — Set thinking level
+/scoped-models — Choose models for cycling
+/export [path] — Export Pi session
+/import <path> — Import and resume a Pi JSONL session
+/share — Share Pi session via its native control
+/bug <description> — Pi developer bug-report control
+/copy — Copy last Pi response
+/name <name> — Set Pi session name
+/session — Inspect Pi session stats
+/changelog — Inspect Pi changelog
+/hotkeys — Inspect native shortcuts
+/fork — Fork a Pi session
+/clone — Duplicate current Pi session
+/trust — Set Pi project trust
+/login [provider] — Configure provider authentication
+/logout — Remove provider authentication
+/new — Start a conversation session
+/compact [instructions] — Compact Pi context
+/resume — Select a Pi conversation session
+/reload — Reload Pi resources
+/quit — Save and exit Fade
+Tab switches panes when no completion is open. Alt+1/2/3 selects Builder/Companion/Fade.
+Escape closes inspection/completion first, otherwise interrupts the focused role. Companion stays read-only.
+! / !! are explicit human shell operations through Pi after Builder quiescence.
+/pi opens native controls; /fade restores saved panes.
+```
+<!-- END_GENERATED_COMMANDS -->
 
-## Fade controls
+Interactive `/resume` selects a Pi conversation; `/continue` continues Builder. Plain `/resume` is a deprecated Builder alias for one compatibility cycle. Interactive `/reload` reloads Pi resources; plain `/reload` is a deprecated `/apply-intent` alias.
 
-| Command | Purpose |
-| --- | --- |
-| `/intent` | Show intent and prepare editable `intent-edit.json` |
-| `/apply-intent` | Apply edits if their revision is current |
-| `/status` | Inspect current and future implementation |
-| `/builder [message]` | Show present work or send a durable Builder note |
-| `/companion <message>` | Address the Companion explicitly |
-| `/reports` | Read both roles' reports and Builder verification claims |
-| `/pause`, `/stop`, `/continue` | Control the Builder while keeping conversation available |
-| `/redirect <thought>` | Interrupt the active slice and develop a new direction |
-| `/rethink` | Reconcile discoveries, edited intent, or a failed conversation |
-| `/history`, `/log` | Inspect Fade conversation or actual Builder events |
-| `/preference design` or `/preference technical` | Set conversation emphasis |
-| `/quit` | Save, cancel active work, and exit |
+## Evidence, recovery and local support
 
-Escape interrupts Fade work from the main editor; native menus and autocomplete retain their normal Escape handling. The Builder footer shows progress while its completion summary appears in the conversation. Ordinary work does not require a Fade command approval gate. A run has a four-slice ceiling; `/continue` resets it.
+Observed paired tool results and explicit human acceptance are separate from model verification claims. Zero observed checks cannot establish acceptance; failures and stale evidence hold dependent work. `/builder`, `/changes` and `/log` expose the evidence and its limits. Text snapshots omit binaries, links and large files; context diffs explicitly label omissions and uncertain external attribution. They never overwrite your files.
 
-The line interface retains `/write`, `/send`, `/cancel`, `/editor`, `/resume`, `/reload`, and `/models` for scripts and plain terminals. Interactive use defaults to Pi's native TUI.
+Accepted receipts are durably recorded before acknowledgement. Large payloads use separate files; older history remains paged/searchable. Draft writes coalesce for at most 150 ms and flush at boundaries. Recovery and backed-up migration stay paused; inspect `/inputs` and `/status` before an explicit retry or `/continue`.
 
-## The loop
+`/bug-report` previews content-free support metadata. `/bug-report export [relative-path.json]` explicitly creates a new local file below the workspace root after Builder stops; existing files are never overwritten. The report excludes paths, IDs, URLs, credentials, errors, drafts, conversations, source and tool output. Native previews/exports never enter model context. Nothing is uploaded.
 
-1. Every ordinary input is saved before processing. The first request starts a bounded Builder slice alongside the Companion.
-2. The Companion uses Pi normally and may call `fade_update_intent` to propose exact human quotes, unresolved questions, and one future slice. Its prose streams independently of this metadata.
-3. The coordinator validates provenance and revisions. Tentative ideas remain tentative; contradictory statements remain visible conflicts. An explicit reversal preserves source history.
-4. A ready future slice automatically follows completed dependencies using a fixed intent snapshot. Conversation cannot silently rewrite the active brief.
-5. Discoveries hold affected future briefs for reconciliation against existing human intent. They cannot create new human decisions.
+Stock Builder tools execute with your OS permissions. The coordinator's lease controls role overlap; it is not an OS sandbox against external programs or installed extension code. See [security reporting](SECURITY.md).
 
-The Builder reports structured results; malformed results get one format-only repair with implementation tools disabled. Its summaries and verification strings remain model claims alongside real execution events.
+## Development and qualification
 
-## Persistence and implementation
+In a repository checkout:
 
-`.fade/journal.jsonl` is the durable source of recovery state. Atomic `state.json`, readable `intent.md`, revision-checked edits, and separate Pi session files preserve conversation, intent, and slice history. `builder-events.jsonl` retains actual tool calls and results. An interrupted final journal append is preserved and ignored during recovery. A workspace lock prevents two Fade instances from modifying its state.
-
-| File | Responsibility |
-| --- | --- |
-| `src/cli.ts`, `src/plain.ts` | Global command and line fallback |
-| `src/tui.ts` | Real Pi conversation, native tools, branding, and intent metadata tool |
-| `src/pi-resources.ts` | Pinned Pi CLI's complete built-in extension set |
-| `src/app.ts` | Durable input queue, Fade commands, shutdown |
-| `src/coordinator.ts` | Stable slices, handoffs, provenance, conflicts, cancellation |
-| `src/pi.ts` | Separate native Pi Builder and line-interface Companion sessions |
-| `src/contracts.ts`, `src/store.ts` | Validated payloads and persistence |
-
-Pi packages are pinned consistently to 1.0.4 to avoid mixing incompatible runtime types. The built-in extension loader uses that pinned SDK's internal CLI extension manifest because Pi does not export the full set publicly; the loader validates its shape and fails visibly if it changes.
-
-## Verification
-
-```powershell
-node node_modules/typescript/bin/tsc --noEmit -p tsconfig.test.json
-node --import tsx --test tests/*.test.ts
-node node_modules/typescript/bin/tsc -p tsconfig.json
-node dist/cli.js --help
+```text
+npm ci
+node scripts/verify.mjs
+node scripts/package-release.mjs
+node scripts/package-smoke.mjs
+node --import tsx scripts/performance.ts
 ```
 
-Tests cover coordination, source provenance, tentative/conflicting intent, immutable snapshots, discoveries, stale replies, failures, cancellation, recovery, locks, native input routing, queue durability, real read/write/edit tools, shell execution, session navigation, model selection, and project resource discovery. Model transport is simulated in deterministic tests; Pi's tools and loop are real.
+The public archive has an explicit product source/runtime inventory; experiments, debug helpers, tests, work orders and private workspaces remain outside it. The smoke helper installs the unchanged previous archive with its own locked tree, then upgrades its preserved workspace using the scoped candidate in an isolated global prefix. It executes both aliases, verifies paused migration, and uninstalls without deleting project history or changing your global development link. Coupled Pi packages are explicit exact 1.0.4 dependencies; global npm installs cannot rely on a dependency package's overrides.
 
-Opt-in cloud tests:
-
-```powershell
-node --import tsx scripts/live-exchanges.ts
-node --import tsx scripts/live-native.ts
-node --import tsx scripts/live-smoke.ts
-```
-
-Set both role model environment variables explicitly. The native test writes an undisclosed marker to an essay, asks the Companion to read it with its tools, verifies the answer, and executes a native shell command. The second test checks a real Builder A → B transition and generated code. The exchange test goes back and forth three times with the Companion while sending a separate Builder note, verifies its receipt, and reads both reports. These scripts make model calls in temporary workspaces.
-
-## Limits
-
-Pi tools execute with the user's normal permissions. Builder scope and avoidance of concurrent edits are instructions, not an OS sandbox or transactional filesystem isolation. Interpretation still depends on the model: exact source quotes do not guarantee faithful meaning. Native history uses Pi's normal context and compaction, while Living Intent retains settled meaning separately. The plain interface still buffers structured replies. The snapshot journal grows with project history. See `IMPLEMENTATION_STATUS.md` for observed checks.
+The deterministic suite uses real Pi loops/tools and synthetic transports. Real-provider rehearsals require explicit model selection and retain failures. Local rehearsals are not clean-machine or participant qualification. [Synthetic usage example](examples/conversation.md), [synthetic test-screen sequence](examples/demo.cast), [contributing](CONTRIBUTING.md) and [changelog](CHANGELOG.md). The demo is an anonymized sequence of actual test renders, not a physical-terminal/provider recording.
