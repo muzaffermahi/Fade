@@ -129,3 +129,16 @@ test('the wordmark is seven rows at wide widths and one line when narrow', () =>
   assert.equal(wordmark(60).length, 1);
   assert.notDeepEqual(wordmark(120, 1), wordmark(120, 2)); // twinkle changes the dust
 });
+
+test('streaming Companion text appears as it arrives and is then kept in the transcript', async () => {
+  const h = createHarness('review', 120, 40);
+  h.app.setFocus('companion');
+  h.fade.sendToCompanion('tell me more');
+  await new Promise(resolve => setTimeout(resolve, 150));
+  const early = text(h);
+  assert.match(early, /Good instinct/);
+  assert.ok(!early.includes('make it a card'));
+  await new Promise(resolve => setTimeout(resolve, 1500));
+  assert.match(text(h), /Want me to turn that into a card\?/);
+  h.dispose();
+});

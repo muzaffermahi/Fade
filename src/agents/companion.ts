@@ -11,7 +11,7 @@ import {
 } from './pi.js';
 
 // Read-only built-ins plus the Fade card tools. No edit, write or bash.
-const TOOL_NAMES = ['read', 'grep', 'find', 'ls', 'fade_add_card', 'fade_edit_card', 'fade_read_plan'];
+export const COMPANION_TOOLS = ['read', 'grep', 'find', 'ls', 'fade_add_card', 'fade_edit_card', 'fade_read_plan'];
 
 export interface PiCompanionOptions {
   cwd: string;
@@ -40,7 +40,7 @@ export class PiCompanion implements CompanionAgent {
         cwd: this.opts.cwd,
         modelRuntime: this.opts.runtime,
         ...(model ? { model } : {}),
-        tools: TOOL_NAMES,
+        tools: COMPANION_TOOLS,
         customTools: this.customTools(),
         resourceLoader: await loader(this.opts.cwd, COMPANION_PROMPT),
         sessionManager: SessionManager.continueRecent(this.opts.cwd, join(this.opts.cwd, '.fade', 'sessions', 'companion')),
@@ -76,6 +76,9 @@ export class PiCompanion implements CompanionAgent {
         body: Type.Optional(Type.String()),
       }),
       execute: async (_id, params) => {
+        const target = plan.list().find(card => card.title === params.title);
+        if (!target) throw new Error(`There is no card titled "${params.title}". Use fade_read_plan to see the plan.`);
+        if (target.state === 'building') throw new Error('That card is being built right now; leave it alone.');
         const patch: { title?: string; body?: string } = {};
         if (params.newTitle !== undefined) patch.title = params.newTitle;
         if (params.body !== undefined) patch.body = params.body;

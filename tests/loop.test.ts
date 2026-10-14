@@ -6,6 +6,8 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { FakeBuilder, FakeCompanion } from '../src/agents/fake.js';
 import { Git } from '../src/git.js';
+import { COMPANION_TOOLS } from '../src/agents/companion.js';
+import { formatCompanionContext } from '../src/agents/prompts.js';
 import { Fade, titleFromText } from '../src/loop.js';
 import { parsePlan, PlanStore } from '../src/plan.js';
 import { StateStore } from '../src/state.js';
@@ -265,4 +267,33 @@ test('companion messages and cards land in the transcript and plan', async () =>
 test('titleFromText trims at a word boundary', () => {
   assert.equal(titleFromText('short'), 'short');
   assert.ok(titleFromText('word '.repeat(30)).length <= 48);
+});
+
+test('the Companion only gets read-only built-in tools plus the card tools', () => {
+  for (const banned of ['edit', 'write', 'bash']) assert.ok(!COMPANION_TOOLS.includes(banned), banned);
+  assert.deepEqual(COMPANION_TOOLS.filter(name => !name.startsWith('fade_')), ['read', 'grep', 'find', 'ls']);
+});
+
+test('the Companion context lists the build, reviews, plan and recent work', async () => {
+  const cwd = makeRepo('## [building] Search\n\n## [review] Done thing\n\n## [draft] Idea\n\n## Done\n- Old one\n');
+  const fade = makeFade(cwd);
+  const context = formatCompanionContext(fade.view());
+  assert.match(context, /Builder idle/);
+  assert.match(context, /\[building\] Search/);
+  assert.match(context, /\[draft\] Idea/);
+  assert.match(context, /Recently done: Old one/);
+  fade.dispose();
+});
+
+test('the Companion transcript is restored after a restart', async () => {
+  const cwd = makeRepo('## [draft] Existing\n');
+  const first = makeFade(cwd);
+  first.start();
+  first.sendToCompanion('hello there');
+  await until(() => first.view().companion.some(e => e.role === 'companion'), 'reply');
+  await until(() => !first.view().companionBusy);
+  first.dispose();
+  const second = makeFade(cwd);
+  assert.equal(second.view().companion[0]?.text, 'hello there');
+  second.dispose();
 });

@@ -31,6 +31,7 @@ export class CompanionRenderer {
 
   private markdown(key: string, text: string): Markdown {
     let md = this.cache.get(key);
+    if (md && key === 'live') md.setText(sanitize(text));
     if (!md) {
       md = new Markdown(sanitize(text), 0, 0, markdownTheme, { color: c.text });
       if (this.cache.size > 400) this.cache.clear();
