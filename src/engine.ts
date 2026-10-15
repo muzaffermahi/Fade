@@ -6,9 +6,8 @@ import type { StateStore } from './state.js';
 import type { Git } from './git.js';
 import { formatCompanionContext } from './agents/prompts.js';
 import { CompanionChat } from './companion-chat.js';
-import { runwayMs } from './flow.js';
 import { PlanModel } from './plan-model.js';
-import { applyBuilderEvent, makeReview, Toast, type BuildingView, type FadeView, type SessionStats } from './view.js';
+import { applyBuilderEvent, landingMessage, makeReview, Toast, type BuildingView, type FadeView, type SessionStats } from './view.js';
 import type { BuilderAgent, BuilderEvent, BuildOutcome, Card, CompanionAgent, DoneEntry, Review } from './types.js';
 
 export interface FadeOptions {
@@ -28,6 +27,7 @@ const MAX_LOG = 200;
  */
 export abstract class Engine {
   protected lastQuiet: DoneEntry | undefined;
+  protected checkpoints = new Map<string, string>();
   protected proofAbort: AbortController | undefined;
   protected readonly cwd: string;
   abstract accept(title: string, options?: { quiet?: boolean }): void;
@@ -38,7 +38,7 @@ export abstract class Engine {
   protected disposed = false;
   protected builderLog: string[] = [];
   protected builderError: string | undefined;
-  protected freshDraft: string | undefined;
+  protected showTitle: string | undefined;
   protected readonly session: SessionStats = { startedAt: Date.now(), shipped: [], commits: 0, idleMs: 0 };
   protected idleSince: number | null = null;
   protected readonly toaster = new Toast(() => this.notify());
@@ -84,27 +84,19 @@ export abstract class Engine {
     const data = this.state.data;
     const idleNow = this.idleSince === null ? 0 : now - this.idleSince;
     const view: FadeView = {
-      goal: plan.goal,
       cards: plan.cards.map(card => ({ ...card })),
       later: [...plan.later],
       done: [...plan.done],
       reviews: [...data.reviews],
+      landedReviews: [...data.landedReviews],
       building: this.building ? { ...this.building } : null,
       builderLog: [...this.builderLog],
       companion: [...data.companion],
       companionBusy: this.chat.busy,
       shippedToday: data.shipped.count,
-      progress: { done: data.goalShipped.length, total: data.goalShipped.length + plan.cards.length },
-      runwayMs: runwayMs({
-        cards: plan.cards, buildingSince: this.building?.startedAt ?? null, durations: data.durations, now,
-      }),
       session: { ...this.session, shipped: [...this.session.shipped], idleMs: this.session.idleMs + idleNow },
-      bell: data.bell,
+      ...(this.showTitle ? { showTitle: this.showTitle } : {}),
     };
-    if (plan.goal && plan.cards.length === 0 && data.goalShipped.length > 0) {
-      view.goalComplete = { goal: plan.goal, steps: [...data.goalShipped], startedAt: data.goalStartedAt };
-    }
-    if (this.freshDraft && this.model.find(this.freshDraft)?.state === 'draft') view.freshDraft = this.freshDraft;
     if (this.lastQuiet) view.lastQuiet = { ...this.lastQuiet };
     if (this.builderError) view.builderError = this.builderError;
     if (this.chat.live !== undefined) view.companionLive = this.chat.live;
@@ -199,7 +191,6 @@ export abstract class Engine {
 
   protected context(exclude: string): string {
     const lines: string[] = [];
-    if (this.model.plan.goal) lines.push(`The goal this card serves: ${this.model.plan.goal}`);
     const next = this.model.cards.filter(c => c.title !== exclude).slice(0, 3).map(c => `- ${c.title}`);
     if (next.length > 0) lines.push(`Coming up in the plan (don't work on these):\n${next.join('\n')}`);
     return lines.join('\n\n');
@@ -216,15 +207,6 @@ export abstract class Engine {
   }
 
   protected onBuilderEvent(event: BuilderEvent): void {
-    if (event.type === 'understood' && this.building) {
-      const card = this.model.find(this.building.title);
-      if (card && doneWhenLines(card.body).length === 0) {
-        const assumptions = (event.assumptions ?? []).slice(0, 2).map(line => `Assuming: ${line}`);
-        card.body = [event.outcome, ...assumptions, ...event.doneWhen.map(line => `Done when: ${line}`), '', `> Original request: ${card.body}`].join('\n');
-        this.building.understood = [event.outcome, ...assumptions].join(' ');
-        this.model.save();
-      }
-    }
     if (event.type === 'log') this.builderLog = [...this.builderLog, event.line].slice(-MAX_LOG);
     else if (this.building) applyBuilderEvent(this.building, event);
     this.notify();
@@ -252,13 +234,13 @@ export abstract class Engine {
 
   protected async finishBuild(original: Card, outcome: BuildOutcome): Promise<void> {
     let card = this.takeBuildingCard(original);
-    const startedAt = this.building?.startedAt ?? Date.now();
     let quiet = false;
     let carryOn = true;
     if (outcome.kind === 'done' || outcome.kind === 'stuck' || outcome.kind === 'unfinished') {
       const partial = outcome.kind !== 'done' ? ' (partial)' : '';
       const saved = this.checkpoint(`fade: ${card.title}${partial}`);
       this.lastQuiet = undefined;
+      if (saved.sha) this.checkpoints.set(card.title, saved.sha);
       const review = makeReview(card, outcome, saved);
       if (outcome.kind === 'done') {
         if (this.building) this.building.action = 'checking…';
@@ -283,13 +265,19 @@ export abstract class Engine {
       } else card.state = 'review';
       this.removeReview(card.title);
       if (card.state === 'review') this.state.data.reviews.push(review);
-      if (outcome.kind === 'done') this.state.recordDuration(Date.now() - startedAt);
+      const checkpointError = this.builderError && !saved.sha ? ` ${this.builderError}` : '';
+      this.state.data.companion.push({ role: 'landed', text: landingMessage(review, card.state === 'ready') + checkpointError });
     } else if (outcome.kind === 'stopped') {
-      this.checkpoint(`fade: ${card.title} (partial)`);
+      const saved = this.checkpoint(`fade: ${card.title} (partial)`);
+      if (saved.sha) this.checkpoints.set(card.title, saved.sha);
       this.demote(card, '> Stopped partway.');
+      carryOn = false;
+      const review = makeReview(card, { kind: 'unfinished', summary: '' }, { files: [] });
+      this.state.data.companion.push({ role: 'landed', text: landingMessage(review) });
     } else {
       this.demote(card, `> Failed: ${outcome.error}`);
       this.builderError = outcome.error;
+      this.state.data.companion.push({ role: 'landed', text: `✗ ${card.title} couldn't finish: ${outcome.error}` });
       // NOTE: no automatic retry, and no ticking on: a broken setup would fail every ready card in turn.
       // Sending the Builder a task (or readying a card) resumes the queue.
       carryOn = false;

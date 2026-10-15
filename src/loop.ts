@@ -1,11 +1,9 @@
 import { Engine } from './engine.js';
-import { titleFromText } from './view.js';
 import type { Card, DoneEntry, SlashHost } from './types.js';
 
 export type { FadeOptions } from './engine.js';
-export { titleFromText };
 
-/** Everything you can do: ready steps, review what landed, keep the thread, talk to either agent. */
+/** Everything you can do: ready steps, review what landed, keep the thread, talk to Fade. */
 export class Fade extends Engine {
 
   toggleReady(title: string): void {
@@ -14,7 +12,6 @@ export class Fade extends Engine {
     if (card.state === 'draft') {
       card.state = 'ready';
       this.builderError = undefined;
-      if (this.freshDraft === title) this.freshDraft = undefined;
       this.model.save();
       this.tick();
     } else if (card.state === 'ready') {
@@ -24,16 +21,41 @@ export class Fade extends Engine {
     this.notify();
   }
 
-  move(title: string, direction: -1 | 1): void {
-    if (this.model.move(title, direction)) this.persist();
+  move(title: string, toTop: boolean): void {
+    const card = this.model.find(title);
+    if (!card || card.state === 'building') return;
+    this.model.remove(title);
+    if (toTop) this.model.cards.unshift(card);
+    else this.model.cards.push(card);
+    this.persist();
   }
+
+  ready(title: string): void {
+    if (this.model.find(title)?.state === 'draft') this.toggleReady(title);
+  }
+
+  queue(title: string, body: string): string {
+    const unique = this.model.add(title, body, 'ready');
+    this.builderError = undefined;
+    this.model.save();
+    this.tick();
+    this.persist();
+    return unique;
+  }
+
+  show(title: string): void {
+    this.showTitle = title;
+    this.notify();
+  }
+
+  clearShow(): void { this.showTitle = undefined; }
+
 
   drop(title: string): void {
     const card = this.model.find(title);
     if (!card || card.state === 'building') return;
     this.model.remove(title);
     this.removeReview(title);
-    if (this.freshDraft === title) this.freshDraft = undefined;
     this.persist();
   }
 
@@ -45,13 +67,10 @@ export class Fade extends Engine {
 
   /** A card the Companion proposed: it becomes the "ready it?" suggestion. */
   proposeCard(title: string, body: string): string {
-    const unique = this.model.add(title, body);
-    this.freshDraft = unique;
-    this.persist();
-    return unique;
+    return this.addCard(title, body);
   }
 
-  editCard(title: string, patch: { title?: string; body?: string }, proposed = false): void {
+  editCard(title: string, patch: { title?: string; body?: string }): void {
     const card = this.model.find(title);
     if (!card) return;
     if (patch.body !== undefined) card.body = patch.body.trim();
@@ -61,32 +80,13 @@ export class Fade extends Engine {
       const review = this.state.data.reviews.find(r => r.title === card.title);
       if (review) review.title = unique;
       if (this.building?.title === card.title) this.building.title = unique;
-      if (this.freshDraft === card.title) this.freshDraft = unique;
       card.title = unique;
     }
-    if (proposed && card.state === 'draft') this.freshDraft = card.title;
     this.persist();
   }
 
   list(): Card[] {
     return this.model.cards.map(card => ({ ...card }));
-  }
-
-  setGoal(text: string): void {
-    const goal = text.replace(/\s+/g, ' ').trim();
-    if (goal === this.model.plan.goal) return;
-    this.model.setGoal(goal);
-    this.state.data.goalShipped = [];
-    this.state.data.goalStartedAt = Date.now();
-    this.persist();
-  }
-
-  /** Closes a finished goal so the next thread can start. */
-  finishGoal(): void {
-    this.model.setGoal('');
-    this.state.data.goalShipped = [];
-    this.state.data.goalStartedAt = Date.now();
-    this.persist();
   }
 
   park(text: string): void {
@@ -104,26 +104,44 @@ export class Fade extends Engine {
     if (!card || card.state !== 'review') return;
     const review = this.removeReview(title);
     this.model.remove(title);
+    if (review) this.state.data.landedReviews = [...this.state.data.landedReviews, review].slice(-50);
     const entry: DoneEntry = review?.sha ? { title, sha: review.sha } : { title };
     this.model.plan.done.push(entry);
     this.state.rollDate();
     this.state.data.shipped.count += 1;
-    this.state.data.goalShipped.push(title);
     this.session.shipped.push(title);
     this.persist();
     if (quiet) {
       this.lastQuiet = entry;
       this.session.quiet = (this.session.quiet ?? 0) + 1;
     }
-    this.toaster.show(quiet ? `✓ ${title} · verified · u undo` : 'Shipped ✓');
+    this.toaster.show(`✓ ${title} is done`);
   }
 
-  revise(title: string, note: string): void {
-    const card = this.model.find(title);
-    if (!card || card.state !== 'review') return;
-    this.removeReview(title);
+  async revise(title: string, body: string, startOver = false): Promise<void> {
+    let card = this.model.find(title);
+    if (!card) {
+      const done = this.model.plan.done.findLast(d => d.title === title);
+      if (!done) return;
+      this.model.plan.done = this.model.plan.done.filter(d => d !== done);
+      this.model.add(title, body + (startOver && done.sha ? `\n\nStart from: revert ${done.sha} first` : ''), 'ready', true);
+      this.model.save();
+      this.tick();
+      this.persist();
+      return;
+    }
+    const wasBuilding = card.state === 'building';
+    if (wasBuilding) {
+      await this.stopBuilder();
+      while (this.building?.title === title && !this.disposed) await new Promise(resolve => setTimeout(resolve, 10));
+      if (this.disposed) return;
+      card = this.model.find(title);
+      if (!card) return;
+    }
+    const review = this.removeReview(title);
+    const sha = review?.sha ?? this.checkpoints.get(title);
+    card.body = body.trim() + (startOver && sha ? `\n\nStart from: revert ${sha} first` : '');
     card.state = 'ready';
-    card.body = `${card.body}\n\n> Revise: ${note.trim()}`.trim();
     this.model.moveToTop(card);
     this.model.save();
     this.tick();
@@ -132,7 +150,8 @@ export class Fade extends Engine {
 
   undo(title: string): void {
     const card = this.model.find(title);
-    if (!card || card.state !== 'review') return;
+    if (!card) return this.undoDone(title);
+    if (card.state !== 'review') return;
     const review = this.removeReview(title);
     this.model.remove(title);
     const sha = review?.sha ?? 'the checkpoint commit';
@@ -158,19 +177,11 @@ export class Fade extends Engine {
     this.persist();
   }
 
-  sendToBuilder(text: string): void {
+  noteBuilder(text: string): void {
     const clean = text.trim();
-    if (!clean) return;
-    if (this.building) {
-      this.building.notes.push(clean);
-      void this.builder.note(clean).catch(() => undefined);
-      this.notify();
-      return;
-    }
-    this.model.add(titleFromText(clean), clean, 'ready', true);
-    this.builderError = undefined;
-    this.model.save();
-    this.tick();
+    if (!clean || !this.building) return;
+    this.building.notes.push(clean);
+    void this.builder.note(clean).catch(() => undefined);
     this.notify();
   }
 
@@ -182,19 +193,36 @@ export class Fade extends Engine {
   }
 
   sendToCompanion(text: string): void {
-    // Talking on means you've moved past the step it last proposed (it can propose again).
-    this.freshDraft = undefined;
-    this.chat.send(text);
+    const clean = text.trim();
+    if (!clean) return;
+    const word = clean.toLowerCase();
+    const drafts = this.model.cards.filter(c => c.state === 'draft');
+    const questions = this.state.data.reviews.filter(r => r.verdict === 'look' || r.question);
+    const confirm = ['yes', 'y', 'go', 'ok'].includes(word);
+    const accepted = this.state.data.landedReviews.filter(review =>
+      this.model.plan.done.some(done => done.title === review.title && done.sha === review.sha));
+    const latest = [...this.state.data.reviews, ...accepted]
+      .sort((a, b) => a.finishedAt - b.finishedAt).at(-1) ?? this.model.plan.done.at(-1);
+    if (word === 'stop' && this.building) {
+      this.state.data.companion.push({ role: 'you', text: clean });
+      void this.stopBuilder();
+    } else if ((word === 'undo' || word === 'undo that') && latest?.sha) {
+      this.state.data.companion.push({ role: 'you', text: clean });
+      this.undo(latest.title);
+    } else if (confirm && !this.chat.busy && drafts.length + questions.length === 1) {
+      const draft = drafts[0];
+      const question = questions[0];
+      this.state.data.companion.push({ role: 'you', text: clean });
+      if (draft) this.ready(draft.title);
+      else if (question?.question) void this.revise(question.title, `${this.model.find(question.title)?.body ?? ''}\n\nAnswer: yes`);
+      else if (question) this.accept(question.title);
+    } else return this.chat.send(clean);
+    this.saveState();
+    this.notify();
   }
 
   stopCompanion(): Promise<void> {
     return this.chat.stop();
-  }
-
-  setBell(on: boolean): void {
-    this.state.data.bell = on;
-    this.saveState();
-    this.notify();
   }
 
   slashHost(which: 'builder' | 'companion'): SlashHost | undefined {

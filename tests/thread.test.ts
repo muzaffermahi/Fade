@@ -50,47 +50,18 @@ async function until(check: () => boolean, label = 'condition'): Promise<void> {
 
 const disk = (cwd: string) => parsePlan(readFileSync(join(cwd, 'PLAN.md'), 'utf8'));
 
-test('a goal counts its shipped steps and closes when every step has shipped', async () => {
-  const cwd = makeRepo('# Plan\nGoal: Search that feels instant\n\n## [ready] Index titles\nDone when: titles are indexed.\n');
+test('legacy goals stay in PLAN.md without progress or goal-done announcements', async () => {
+  const cwd = makeRepo('# Plan\nGoal: Legacy intent\n\n## [ready] Index titles\nDone when: titles are indexed.\n');
   const fade = makeFade(cwd);
-  fade.start();
-  assert.deepEqual(fade.view().progress, { done: 0, total: 1 });
-  await until(() => fade.view().reviews.length === 1, 'review');
-  const review = fade.view().reviews[0];
-  assert.deepEqual(review?.doneWhen, ['titles are indexed.']);
-  assert.equal(review?.checks?.[0]?.passed, true, 'the Builder reported its own check');
-  assert.ok(review?.tryCommand, 'and left a try command');
-  assert.equal(fade.view().goalComplete, undefined);
-  fade.accept('Index titles');
-  assert.deepEqual(fade.view().progress, { done: 1, total: 1 });
-  assert.deepEqual(fade.view().goalComplete?.steps, ['Index titles']);
-  assert.deepEqual(fade.view().session.shipped, ['Index titles']);
-  fade.finishGoal();
-  assert.equal(fade.view().goal, '');
-  assert.equal(fade.view().goalComplete, undefined);
-  assert.deepEqual(fade.view().progress, { done: 0, total: 0 });
-  assert.equal(disk(cwd).goal, '');
-  fade.dispose();
-});
-
-test('build durations are remembered for the runway estimate', async () => {
-  const cwd = makeRepo('## [ready] One\n');
-  const fade = makeFade(cwd);
-  fade.start();
-  await until(() => fade.view().reviews.length === 1);
-  const saved = JSON.parse(readFileSync(join(cwd, '.fade', 'state.json'), 'utf8'));
-  assert.equal(saved.durations.length, 1);
-  fade.dispose();
-});
-
-test('a new goal starts a fresh count', () => {
-  const cwd = makeRepo('# Plan\nGoal: Old\n\n## [draft] A\n');
-  const fade = makeFade(cwd);
-  fade.setGoal('New thread');
-  assert.equal(fade.view().goal, 'New thread');
-  assert.equal(disk(cwd).goal, 'New thread');
-  assert.deepEqual(fade.view().progress, { done: 0, total: 1 });
-  fade.dispose();
+  try {
+    fade.start();
+    await until(() => fade.view().reviews.length === 1);
+    fade.accept('Index titles');
+    assert.equal(disk(cwd).goal, 'Legacy intent');
+    assert.ok(!('progress' in fade.view()));
+    assert.ok(!('goalComplete' in fade.view()));
+    assert.ok(!fade.view().companion.some(entry => /Goal done:/.test(entry.text)));
+  } finally { fade.dispose(); }
 });
 
 test('parked thoughts live in Later and can come back as a step', () => {
@@ -103,35 +74,20 @@ test('parked thoughts live in Later and can come back as a step', () => {
   const title = fade.promote('export to MARKDOWN', 'Markdown export', 'One file per note.\nDone when: files appear.');
   assert.equal(title, 'Markdown export');
   assert.deepEqual(fade.view().later, []);
-  assert.equal(fade.view().freshDraft, 'Markdown export');
+  assert.equal(fade.view().cards.at(-1)?.state, 'draft');
   fade.dispose();
 });
 
-test('the step the Companion proposes becomes the fresh suggestion until you ready it or move on', () => {
-  const cwd = makeRepo('## [draft] Mine\n');
-  const fade = makeFade(cwd);
-  fade.addCard('Typed by me', '');
-  assert.equal(fade.view().freshDraft, undefined, 'your own cards are not suggestions');
-  fade.proposeCard('Proposed', 'body');
-  assert.equal(fade.view().freshDraft, 'Proposed');
-  fade.toggleReady('Proposed');
-  assert.equal(fade.view().freshDraft, undefined, 'readied');
-  fade.proposeCard('Another', 'body');
-  fade.sendToCompanion('let us talk about something else');
-  assert.equal(fade.view().freshDraft, undefined, 'moved on');
-  fade.dispose();
-});
-
-test('the Companion names a goal and proposes a first step from the first message', async () => {
+test('Fade proposes a first step without inventing a goal', async () => {
   const cwd = makeRepo('');
   const fade = makeFade(cwd);
   fade.start();
   fade.sendToCompanion('a tiny habit tracker');
   await until(() => fade.view().cards.length === 1 && !fade.view().companionBusy, 'first step');
   const view = fade.view();
-  assert.equal(view.goal, 'a tiny habit tracker');
-  assert.equal(view.freshDraft, view.cards[0]?.title);
-  assert.ok(view.companion.some(entry => entry.role === 'goal'));
+  assert.equal(disk(cwd).goal, '');
+  assert.equal(view.cards[0]?.state, 'draft');
+  assert.ok(!view.companion.some(entry => entry.role === 'goal'));
   assert.ok(view.companion.some(entry => entry.role === 'card'));
   fade.dispose();
 });

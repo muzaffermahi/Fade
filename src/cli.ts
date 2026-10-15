@@ -13,7 +13,7 @@ import { assemble } from './assemble.js';
 import { startUi } from './ui/start.js';
 
 const VERSION = '0.2.0';
-const HELP = `Fade: get your flow back. You navigate, AI drives.
+const HELP = `Fade: just talk to it.
 
   fade                      run in the current directory
   fade --demo               try it in a temp folder with fake agents (no API calls, no key)
@@ -22,7 +22,7 @@ const HELP = `Fade: get your flow back. You navigate, AI drives.
   fade --companion <p/m>    Companion model, e.g. a local one: ollama/<model>
   fade --help | --version
 
-Inside Fade, /model in either pane switches that agent's model and remembers it.
+Inside Fade, /model asks whose model to switch: Builder or Fade.
 `;
 
 interface Args {
@@ -73,7 +73,7 @@ async function main(): Promise<void> {
   if (args.login) login();
 
   if (args.demo) {
-    const cwd = createDemoWorkspace();
+    const cwd = createDemoWorkspace(true);
     const fade = assemble(cwd, plan => ({ builder: new FakeBuilder(cwd), companion: new FakeCompanion(plan) }));
     await startUi(fade, { cwd, branch: new Git(cwd).branch(), builderModel: 'demo', companionModel: 'demo' });
     return;

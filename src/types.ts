@@ -12,10 +12,10 @@ export interface DoneEntry {
 }
 export interface Plan {
   preamble: string;
-  /** The one thread everything serves right now ("Goal: …" in PLAN.md). Empty when unset. */
+  /** Legacy PLAN.md metadata, preserved on disk but hidden from the conversation. */
   goal: string;
   cards: Card[];
-  /** Parked one-liners that don't belong to the current goal ("## Later"). */
+  /** Parked ideas to revisit later ("## Later"). */
   later: string[];
   done: DoneEntry[];
 }
@@ -44,7 +44,6 @@ export type BuildOutcome =
   | { kind: 'failed'; error: string };
 
 export type BuilderEvent =
-  | { type: 'understood'; outcome: string; assumptions?: string[]; doneWhen: string[] }
   | { type: 'steps'; steps: Step[] }
   | { type: 'action'; text: string } // e.g. "editing src/search.ts"
   | { type: 'text'; text: string } // full text of the assistant message being streamed
@@ -55,7 +54,6 @@ export type CompanionEvent =
   | { type: 'text'; text: string } // full streamed text of the current reply
   | { type: 'message'; text: string } // final reply
   | { type: 'card'; title: string; action: 'added' | 'edited' }
-  | { type: 'goal'; text: string }
   | { type: 'parked'; text: string }
   | { type: 'tool'; text: string } // e.g. "reading src/app.ts"
   | { type: 'error'; text: string };
@@ -65,9 +63,7 @@ export type SlashResult =
   | { kind: 'toast'; text: string; model?: string; newSession?: boolean }
   | { kind: 'info'; text: string }
   | { kind: 'prompt'; text: string } // send the raw text to the agent (skills, prompt templates)
-  | { kind: 'pick-model'; models: string[]; current: string }
-  /** Open Pi's own screen on this agent's session; `reopen` reloads the session afterwards. */
-  | { kind: 'handoff'; command: string; args: string[]; reopen: () => Promise<void> };
+  | { kind: 'pick-model'; models: string[]; current: string };
 
 /** Pi's slash commands for one agent's session. */
 export interface SlashHost {
@@ -91,11 +87,20 @@ export interface BuilderAgent {
 
 export interface PlanApi {
   list(): Card[];
+  /** Start an explicitly requested card at the end of the ready queue. */
+  queue(title: string, body: string): string;
+  ready(title: string): void;
+  noteBuilder(text: string): void;
+  stopBuilder(): Promise<void>;
+  accept(title: string): void;
+  /** Replace the card; revert its checkpoint first when the human corrects a misunderstanding. */
+  revise(title: string, body: string, startOver: boolean): Promise<void>;
+  undo(title: string): void;
+  show(title: string): void;
+  move(title: string, toTop: boolean): void;
   /** Returns the final unique title. */
   addCard(title: string, body: string): string;
   editCard(title: string, patch: { title?: string; body?: string }): void;
-  goal(): string;
-  setGoal(text: string): void;
   later(): string[];
   park(text: string): void;
   /** Turns a parked Later item into a draft card; returns the card's title. */
@@ -132,6 +137,6 @@ export interface Review {
 }
 
 export interface TranscriptEntry {
-  role: 'you' | 'companion' | 'card' | 'goal' | 'parked' | 'tool' | 'error';
+  role: 'you' | 'companion' | 'card' | 'goal' | 'parked' | 'tool' | 'error' | 'landed';
   text: string;
 }

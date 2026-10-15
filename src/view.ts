@@ -4,7 +4,6 @@ import type { BuilderEvent, BuildOutcome, Card, DoneEntry, Review, Step, Transcr
 
 export interface BuildingView {
   title: string;
-  understood?: string;
   steps: Step[];
   action: string;
   startedAt: number;
@@ -13,7 +12,7 @@ export interface BuildingView {
   notes: string[];
 }
 
-/** What this run of Fade has done so far: the raw material for the recap card. */
+/** What this run of Fade has done so far: progress recorded during this session. */
 export interface SessionStats {
   startedAt: number;
   shipped: string[];
@@ -23,18 +22,12 @@ export interface SessionStats {
   idleMs: number;
 }
 
-export interface GoalComplete {
-  goal: string;
-  steps: string[];
-  startedAt: number;
-}
-
 export interface FadeView {
-  goal: string;
   cards: Card[];
   later: string[];
   done: DoneEntry[];
   reviews: Review[];
+  landedReviews: Review[];
   building: BuildingView | null;
   builderLog: string[];
   builderError?: string;
@@ -43,25 +36,9 @@ export interface FadeView {
   companionBusy: boolean;
   shippedToday: number;
   lastQuiet?: DoneEntry;
-  /** Steps finished under the current goal, and steps in it overall. */
-  progress: { done: number; total: number };
-  /** Estimated think-time before the Builder runs out of ready work. */
-  runwayMs: number;
-  /** A draft the Companion just proposed and you haven't readied or moved past yet. */
-  freshDraft?: string;
-  /** Set once every step of the goal has shipped, until you start the next goal. */
-  goalComplete?: GoalComplete;
   session: SessionStats;
-  bell: boolean;
+  showTitle?: string;
   toast?: string;
-}
-
-export function titleFromText(text: string): string {
-  const line = (text.split('\n').find(l => l.trim()) ?? 'Task').trim();
-  if (line.length <= 48) return line;
-  const cut = line.slice(0, 48);
-  const space = cut.lastIndexOf(' ');
-  return (space > 20 ? cut.slice(0, space) : cut).trim();
 }
 
 export function applyBuilderEvent(building: BuildingView, event: BuilderEvent): void {
@@ -119,4 +96,28 @@ export function makeReview(card: Card, outcome: BuildOutcome, saved: { sha?: str
   }
   if (saved.sha) review.sha = saved.sha;
   return review;
+}
+
+/** Outcome copy never includes shell commands; Show retains the complete proof. */
+export function landingMessage(review: Review, retried = false): string {
+  const name = review.title.replace(/\s+/g, ' ').trim();
+  const prose = (text: string): string => text.replace(/\s+/g, ' ').trim().slice(0, 180);
+  if (review.question) return `◆ ${name} needs your answer: ${prose(review.question)}`;
+  if (review.verdict === 'unfinished') return `◌ ${name} is unfinished. Say "continue" or tell me what to change.`;
+  if (review.verdict === 'verified') {
+    if (!review.sha) return `◆ ${name} passed its checks, but no checkpoint was saved. Ask to see the result.`;
+    const plain = review.checks?.filter(c => c.ran?.code === 0).map(c => prose(c.criterion))
+      .filter(text => !/[`{};]|(?:node|python[\d.]?|pytest|npm|npx|git|cargo|go test)\s|\b(?:exec|require)\(/i.test(text));
+    const detail = plain?.[0]?.replace(/[.!]$/, '');
+    return detail ? `✓ ${name} — ${detail} (checked).` : `✓ ${name} is done (checks passed).`;
+  }
+  if (review.verdict === 'failed') {
+    return `✗ ${name} didn't pass its checks. ${retried ? 'Sent it back once.' : 'Ask to see the checks or tell me what to change.'}`;
+  }
+  if (review.verdict === 'look') {
+    const questions = review.checks?.filter(c => c.look).map(c => c.look).join(' ') ?? '';
+    return `◆ ${name} is built. Your call: ${prose(questions)}`;
+  }
+  const missing = review.checks?.filter(c => !c.ran && !c.look).map(c => prose(c.criterion).replace(/[.!]+$/, '')).join('; ');
+  return `◆ ${name} is built, but I couldn't check ${missing || 'the result'}. Ask to see the details.`;
 }

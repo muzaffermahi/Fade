@@ -11,6 +11,7 @@ export class Splash implements Component {
   private readonly started = Date.now();
   private readonly timer: NodeJS.Timeout;
   private entered = false;
+  private quitArmedAt = 0;
 
   constructor(private readonly tui: TUI, private readonly onDone: () => void, private readonly onQuit: () => void) {
     this.timer = setInterval(() => {
@@ -42,8 +43,12 @@ export class Splash implements Component {
   }
 
   handleInput(data: string): void {
-    if (matchesKey(data, 'ctrl+c')) this.onQuit();
-    else if (this.ready) {
+    if (matchesKey(data, 'ctrl+c')) {
+      const now = Date.now();
+      if (this.quitArmedAt && now - this.quitArmedAt <= 1500) return this.onQuit();
+      this.quitArmedAt = now;
+      this.tui.requestRender();
+    } else if (this.ready) {
       this.entered = true;
       this.onDone();
     }
@@ -60,10 +65,10 @@ export class Splash implements Component {
     lines.push('', center(c.muted(tagline), tagline.length), '');
     if (this.error) {
       for (const line of wrap(this.error, Math.min(width - 4, 70))) lines.push(center(c.rose(line), line.length));
-      const hint = 'Fix that, then run fade again. (ctrl+c to quit)';
+      const hint = 'Fix that, then run fade again. (ctrl+c twice to quit)';
       lines.push('', center(c.muted(hint), hint.length));
     } else {
-      const status = `${spinnerFrame()} warming up…`;
+      const status = this.quitArmedAt ? 'Press Ctrl+C again to quit' : `${spinnerFrame()} warming up…`;
       lines.push(center(c.mint(status), status.length));
     }
     const top = Math.max(0, Math.floor((rows - lines.length) / 2));

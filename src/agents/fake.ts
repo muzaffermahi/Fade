@@ -1,4 +1,5 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { doneWhenLines } from '../plan.js';
 import type {
@@ -45,6 +46,7 @@ export class FakeBuilder implements BuilderAgent {
     this.running = true;
     this.stopRequested = false;
     try {
+      let undoProof: string | undefined;
       const labels = ['Read the project', 'Sketch the change', `Build ${card.title}`, 'Run the checks'];
       const actions = ['reading README.md', 'searching', `editing fade-demo/${slug(card.title)}.txt`, 'running npm test'];
       for (let i = 0; i < labels.length; i++) {
@@ -56,7 +58,23 @@ export class FakeBuilder implements BuilderAgent {
         onEvent({ type: 'log', line: actions[i] ?? '' });
         await this.pause(1500);
         if (this.stopRequested) return { kind: 'stopped' };
-        if (i === 2) this.writeDemoFile(card);
+        if (i === 2) {
+          const undo = card.title.startsWith('Undo:') && /commit ([a-f0-9]+)/.exec(card.body)?.[1];
+          if (undo) {
+            const files = execFileSync('git', ['show', '--format=', '--name-only', undo], { cwd: this.cwd, encoding: 'utf8' })
+              .split('\n').filter(file => /^fade-demo\/[a-z0-9-]+\.txt$/.test(file));
+            if (files.length) {
+              for (const file of files) {
+                let existed = true;
+                try { execFileSync('git', ['cat-file', '-e', `${undo}^:${file}`], { cwd: this.cwd, stdio: 'pipe' }); }
+                catch { existed = false; }
+                if (existed) execFileSync('git', ['restore', `--source=${undo}^`, '--worktree', '--', file], { cwd: this.cwd });
+                else rmSync(join(this.cwd, file), { force: true });
+              }
+              undoProof = `git diff --exit-code "${undo}^" -- ${files.join(' ')}`;
+            }
+          } else this.writeDemoFile(card);
+        }
       }
       if (/stuck/i.test(card.title)) return { kind: 'stuck', question: 'Should this use the old format or the new one?' };
       const text = `Finished "${card.title}".`;
@@ -64,10 +82,14 @@ export class FakeBuilder implements BuilderAgent {
       const file = `fade-demo/${slug(card.title)}.txt`;
       const checks = doneWhenLines(card.body).map(criterion => ({
         criterion, passed: true, evidence: `checked by reading ${file}`,
+        ...(undoProof ? { proof: undoProof } : /friendlier|calmer|reads like/i.test(criterion)
+          ? { look: 'Does it feel friendlier?' }
+          : /requested demo file|typing "gro"/i.test(criterion)
+            ? { proof: `node -e "if (!require('fs').existsSync('${file}')) process.exit(1)"` } : {}),
       }));
       return {
-        kind: 'done', summary: text, howToTry: `Open ${file}`,
-        tryCommand: `node -e "process.stdout.write(require('fs').readFileSync('${file}','utf8'))"`,
+        kind: 'done', summary: text, howToTry: undoProof ? 'The previous demo change is reverted.' : `Open ${file}`,
+        tryCommand: undoProof ?? `node -e "process.stdout.write(require('fs').readFileSync('${file}','utf8'))"`,
         ...(checks.length > 0 ? { checks } : {}),
       };
     } finally {
@@ -94,13 +116,6 @@ export class FakeBuilder implements BuilderAgent {
   }
 }
 
-const REPLY = 'Good instinct. I would keep it small and start with the part you will touch most, ' +
-  'then see how it feels. Want me to turn that into a card?';
-const GOAL_REPLY = 'Got it, that is our goal. The smallest useful first step is below: ready it with Enter ' +
-  'and I will line up the next one while the Builder works.';
-const STEP_REPLY = 'Here is the next step. Small enough to check in a glance. Enter on an empty line readies it.';
-const PARK_REPLY = 'Parked that in Later so it does not pull us off the goal. Back to the thread.';
-
 export class FakeCompanion implements CompanionAgent {
   private running = false;
   private stopRequested = false;
@@ -116,31 +131,35 @@ export class FakeCompanion implements CompanionAgent {
 
   async init(): Promise<void> {}
 
-  /** A scripted Companion: names a goal, proposes steps, parks tangents. Enough to feel the flow without a model. */
+  /** A scripted Fade: queues requests, proposes steps and parks tangents. Enough to feel the flow without a model. */
   async send(text: string, _context: string, onEvent: (e: CompanionEvent) => void): Promise<void> {
     this.running = true;
     this.stopRequested = false;
     try {
-      const wantsGoal = !this.plan.goal();
-      const wantsPark = /\b(later|park|by the way|btw)\b/i.test(text);
-      const wantsStep = wantsGoal || /\b(card|step|next|suggest)\b/i.test(text);
-      const reply = wantsPark ? PARK_REPLY : wantsGoal ? GOAL_REPLY : wantsStep ? STEP_REPLY : REPLY;
+      const park = /\b(later|park|by the way|btw)\b/i.test(text);
+      const clear = /^(add|make|fix|build|create)\b/i.test(text) && !/friendlier|better|nicer|app\b|tracker\b/i.test(text);
+      const look = /friendlier|calmer|styling/i.test(text);
+      const second = /the second one/i.test(text);
+      const title = second ? 'Friendlier help' : titleFrom(text, 5);
+      const reply = park ? 'Parked for later.' : clear || second ? `On it: ${title}.`
+        : look ? 'Short and direct, or warm and conversational?'
+        : 'I can start with one small step. Want it?';
       const shown = await this.stream(reply, onEvent);
       if (shown) onEvent({ type: 'message', text: shown });
       if (this.stopRequested) return;
-      if (wantsPark) {
+      if (park) {
         const idea = titleFrom(text.replace(/\b(later|park|by the way|btw)\b/gi, ''));
         this.plan.park(idea);
         onEvent({ type: 'parked', text: idea });
-      } else if (wantsGoal) {
-        const goal = titleFrom(text, 8);
-        this.plan.setGoal(goal);
-        onEvent({ type: 'goal', text: goal });
-      }
-      if (wantsStep && !wantsPark) {
-        const step = this.nextStepTitle();
-        const title = this.plan.addCard(step, `${step} for the goal.\nDone when: you can see it working.`);
-        onEvent({ type: 'card', title, action: 'added' });
+      } else {
+        if (clear || second) {
+          const criterion = second ? 'the help feels friendlier.' : 'the requested demo file exists.';
+          this.plan.queue(title, `${text}\nDone when: ${criterion}`);
+        }
+        else if (!look) {
+          const card = this.plan.addCard(title, `${text}\nDone when: you can see it working.`);
+          onEvent({ type: 'card', title: card, action: 'added' });
+        }
       }
     } finally {
       this.running = false;
@@ -156,15 +175,6 @@ export class FakeCompanion implements CompanionAgent {
       await new Promise(resolve => setTimeout(resolve, 30 / this.speed));
     }
     return shown;
-  }
-
-  private steps = 0;
-
-  private nextStepTitle(): string {
-    const ideas = ['Sketch the data shape', 'Wire up the first screen', 'Handle the empty state', 'Polish the details'];
-    const idea = ideas[this.steps % ideas.length] ?? 'Next step';
-    this.steps += 1;
-    return idea;
   }
 
   async stop(): Promise<void> {

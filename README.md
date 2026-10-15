@@ -1,91 +1,93 @@
 # Fade
 
-**Get your flow back. You navigate, AI drives.**
+**Just talk to it.**
 
-<!-- Record with VHS from `fade --demo` (docs/demo.tape) and save as docs/assets/demo.gif -->
-![Fade demo](docs/assets/demo.gif)
-
-Waiting on an AI agent kills focus. Fade keeps you on **one thread**: the Builder builds the current step while you
-shape the next one with the Companion, and the screen only ever shows you the **one next thing** worth doing.
-
-- **One thread.** One goal at a time. Stray ideas get parked in *Later* (Ctrl+N), never lost, never chased.
-- **One next thing.** A single NEXT line: a blocked Builder, the step you just discussed, the step that landed, or an
-  idle Builder. Enter on an empty line acts on it. Nothing changes under you while you type.
-- **Runway.** `runway ~12m` tells you how much think-time you have before the Builder runs out of ready steps.
-- **Feedback first.** Fade re-runs proof commands against the checkpoint. Fully proved steps land quietly with `u` to
-  undo; visual or taste checks ask for your yes/no. Unproved claims and failed checks stay visible in review.
-  `t` runs the try command, `d` shows the diff.
-- **Any model**, including local ones. Run the Companion on a local model and the Builder on your strongest.
+Tell Fade what you want. Clear requests start building immediately, with an “On it” read-back.
+While the Builder works in the side rail, keep thinking and talking to Fade about the next thing.
+If Fade misunderstood, correct it in words. Git checkpoints make undo cheap.
 
 ## Quick start
 
 ```bash
-npx @muzaffermahi/fade --demo     # try it: fake agents, no key, no install
-npm i -g @muzaffermahi/fade       # then:
-fade login                        # connect a provider
-fade                              # run in any git project
+npm ci
+node --import tsx src/cli.ts --demo
+# A real project:
+node --import tsx src/cli.ts login
+node --import tsx src/cli.ts --builder opencode-go/deepseek-v4-flash --companion opencode-go/deepseek-v4-flash
 ```
 
-Needs Node 22.19+ and git.
+Needs Node 22.19+ and git. The demo uses a temporary repository and fake agents, with no model calls.
+In under a minute: type “add a version file”, wait for ✓, then “make the help text friendlier”,
+answer “the second one”, and say “yes” to the look question. “undo that” queues a revert.
+Demo files illustrate the flow; use a real model to build your project.
 
 ## The loop
 
-Three things: **Builder** (left, builds the topmost *ready* step), **Companion** (right, thinks with you, reads the
-project, writes steps; never changes code), **Plan** (`PLAN.md`, editable by hand).
+You talk to **Fade** in one conversation. While work builds or needs your answer, a side rail shows
+Now, queued work and Needs you. Empty sections disappear; idle conversations use the full width.
+At narrow widths, a compact status line replaces the active rail. `PLAN.md` remains editable by hand.
 
-```
-·  draft     an idea being shaped      ◌  building  the Builder is on it
-○  ready     you readied it            ◆  review    landed, waiting for you
-✓  done      accepted; it fades out
-```
+Clear, small asks queue work immediately. Fuzzy or large asks get one concrete question or a proposed
+step and “Want it?”. Say “yes” to a proposal, “stop” to stop work, “undo that” to undo a checkpoint,
+“show me the diff” to inspect work, or “no, I meant…” to correct it. Only your latest message can
+ask Fade to queue, ready, accept, revise or undo.
 
-Only you ready steps. Every finished step becomes a git commit, so undo is just another step.
+Fade re-runs proof commands after checkpointing. Verified work lands quietly with an outcome, such as
+“✓ Search works — typing gro finds Groceries (checked).” Commands and actual output stay in Show.
+Failed checks get one automatic retry. Questions about how it looks get ◆ and your say.
+Unfinished work and results Fade could not check stay visible in the conversation.
+There are no visible goals or progress counters. After a minute of quiet, the empty idle composer
+asks what you would like to do next; it does not start an AI reply.
 
 ## Keys
 
-| Key | What it does |
+| Key | Action |
 |---|---|
-| `⏎` on an empty line / `ctrl+r` | do the NEXT thing |
-| `ctrl+n` | park a thought in Later |
-| `tab` | focus Builder → Companion → Plan |
-| `esc` | stop the Builder step / Companion reply |
-| Plan: `space` `⏎` `n` `x` `alt+↑↓` | ready · open · new · drop · move |
-| Review: `a` `r` `u` `t` `d` | accept · revise · undo · try · diff |
-| `/` | commands: `/model` `/goal` `/later` `/recap` `/tree` `/login` and every Pi command |
-| `?` | help |
+| Enter | Send |
+| Esc | Stop Fade’s reply; close an open view |
+| PgUp / PgDn | Scroll |
+| Ctrl+C twice | First clears input and warns; a second within 1.5 seconds quits |
 
-`/model` in a pane switches that agent's model and remembers it. Pi's own screens (`/tree`, `/resume`, `/settings`)
-open on that agent's session and return when you `/quit`.
+`?` on an empty line opens help. Slash commands: `/model`, `/login`, `/new`, `/show`, `/help`, `/quit`.
+`/model` asks whose model to change; `/model builder provider/model` and `/model fade provider/model`
+select directly. Skills and prompt templates still pass through to Pi. Use Pi in another terminal for
+login, session trees and settings; `/login` explains how. Model choices persist in `.fade/config.json`.
+Show is read-only: summary, checks with actual output, changed files and diff, scrolled together.
 
-## Local models
+## Checking code and using the web
 
-```bash
-fade --companion ollama/<model> --builder anthropic/<model>
-```
+The Builder can run your project's commands, including Python, through its shell. `fade_check` adds
+focused Python syntax checks and existing unittest/pytest tests, JavaScript syntax checks and local
+TypeScript typechecking. It prefers `.venv`, then an available Python executable. Syntax success does
+not prove runtime behavior; missing dependencies and empty test discovery are reported honestly.
+No runtimes, test frameworks or language servers are installed automatically. Other languages use
+the project's own tests and build commands through the shell.
 
-Builders need strong tool calling. If a model answers in prose without using tools, Fade says so and suggests using
-it as the Companion instead.
+Web search and page fetching are bundled through [pi-web-access](https://pi.dev/packages/pi-web-access).
+The default search can use keyless Exa; provider settings remain in `~/.pi/agent/web-search.json`.
+Availability depends on the provider and network. Both agents can research documentation; Fade's
+conversation session retains read-only project access.
+
+The Builder also loads Pi's native MCP discovery and codemode. Existing servers in
+`~/.pi/agent/mcp.json` or a trusted project's `.pi/mcp.json` can be discovered when needed.
+No additional MCP adapter is required. Manage server configuration and sign-in through Pi.
 
 ## PLAN.md
 
 ```markdown
 # Plan
-Goal: Add search to the notes app
-
-## [ready] Index note titles
-Search by title as you type.
+## [ready] Search
+Search titles and body as you type.
 Done when: typing "gro" shows "Groceries".
 
 ## Later
 - Export to markdown
 ```
 
-Edit it while Fade runs; changes are picked up live.
+States remain draft, ready, building, review and done. The top ready card builds first.
+Hand edits are watched live. Each build checkpoints on the current branch, including your concurrent
+edits; use a throwaway repo to try the flow. Undo queues an intelligent revert through the Builder.
+Later ideas stay in PLAN.md. Legacy Goal lines remain readable on disk but are hidden from the interface.
 
-## Why
-
-Code is cheap now. Clarity isn't. When an agent codes faster than you can read, the bottleneck is knowing what you
-want, and the cost is the wait. Fade is built around the human's attention, not the agent's output.
-
-Development: `npm ci`, `npm test`, `npm run snapshot`, `npm run perf`. Built on the Pi agent toolkit: your Pi logins,
-models, skills and extensions just work. MIT licensed.
+Development: `npm test`, `npm run check`, `npm run snapshot`. Built on the Pi agent toolkit.
+Bring your own models, including local models. Builders need reliable tool calling. MIT licensed.

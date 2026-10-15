@@ -1,307 +1,121 @@
-# Fade rebuild plan
+# Fade v0.4: Just talk to it
 
-Status: approved direction, 2026-10-14. Supersedes `product-contract.md`, `readiness-plan.md` and `work-orders/`, which stay on the `archive/contract-era` branch.
+The owner's conversation-polish follow-up supersedes the initial v0.4 goal UI and command-heavy
+landing messages. Proof execution, verdicts, one automatic retry, quiet landing and checkpoint undo remain.
 
-## North star
+## Mental model
 
-**Code is cheap now. Clarity isn't.**
+**You**, **Fade** (the only voice), and **the Builder you watch**. One composer, one conversation.
+Clear requests execute immediately after a one-sentence “On it” read-back. Fuzzy or large requests
+get one concrete question or a draft and “Want it?”. Corrections replace the card body; a misunderstanding
+uses `startOver: true`, stops active work, checkpoints it and instructs the Builder to revert that exact SHA first.
+No separate revision interpreter or Choose syntax.
 
-AI writes code faster than any of us. The bottleneck has moved to *knowing what we want* and giving it structure. Today's tools ignore this: you prompt, then you wait ten minutes doing nothing, then you review, then you prompt again. That kills focus.
+Five states stay unchanged: draft (idea), ready (queued), building, review (needs you), done.
+`PLAN.md` is the ordered, hand-editable source of truth, watched live. The first ready card builds next.
+Later ideas stay in PLAN.md. The conversation is the thread: no automatic goals, progress dots or
+goal-done announcements. Preserve legacy Goal lines on disk, hidden from UI and model context.
+Internal card states and repeated task bodies stay out of conversation, including old transcript entries.
 
-Fade gives you two collaborators at the same time:
+## Authority
 
-- the **Builder** builds what's ready,
-- the **Companion** helps you figure out what's next,
+Every Companion turn begins with a human message. Queue, ready, accept, revise and undo require the
+latest human message to request them. This is a prompt rule and the absence of automatic Companion turns;
+landing messages come from code, never trigger a model turn, and never grant authority.
+No extra authorization machinery. Never grow scope. Git is the undo.
 
-and you stay locked in the whole time, the way coding felt before AI: one clear thing in your head, quick feedback, steady momentum, and no babysitting.
+Companion tools retain read-only project access, add/edit/read/park/promote and add:
+`fade_queue(title, body)`, `fade_ready(title)`, `fade_note_builder(text)`, `fade_stop_builder()`,
+`fade_accept(title)`, `fade_revise(title, body, startOver)`, `fade_undo(title)`,
+`fade_show(title)`, `fade_move(title, toTop)`. Queue appends a ready card. Add proposes a draft.
+The Builder no longer calls fade_understood: Fade's response is the read-back.
+The Companion context includes current work, full cards, review questions and human look questions.
 
-## Design principles
-
-These are rules, not aspirations. When an implementation choice is unclear, these decide it.
-
-1. **Simple enough to explain in one breath.** There are three things (Builder, Companion, Plan) and cards move through five states. If a feature needs a new concept, it probably shouldn't exist.
-2. **Never steal focus.** Nothing moves your cursor, opens a dialog, or switches panes on its own. Ever.
-3. **Ambient, not alarming.** Builder progress sits in your peripheral vision, like a build running in the corner. Only three things ever ask for you: a card ready to review, a Builder question, or the Builder sitting idle. They always appear in the same place.
-4. **There's always a next action.** At any moment the screen makes it obvious what you could do now.
-5. **Keyboard only, two keys at most.** Every common action takes one or two keystrokes.
-6. **Calm screen.** No token counts, costs, IDs, receipts, run limits or status jargon on the main screen.
-7. **Visible momentum.** Finished work feels finished. Accepted cards literally *fade* out of the plan, and a quiet "shipped today: 4" counter tracks progress.
-8. **Shaping is the craft.** Writing and sharpening cards with the Companion is the new "writing code". It should feel like focused writing, not like filling in forms.
-9. **Trust the human; git is the undo.** No provenance tracking, authorization checks or receipt state machines. Every Builder card becomes a commit, so anything can be undone.
-10. **Fast.** Usable within a second of launch. Typing never lags, even while both agents stream.
-
-## The mental model
-
-**Three things:**
-
-| | Role | Can it change code? |
-|---|---|---|
-| **Builder** | Builds the top ready card. You can talk to it directly. | Yes |
-| **Companion** | Thinks with you, reads the project, writes and edits cards. | No, read-only |
-| **Plan** | `PLAN.md`: an ordered list of cards. The shared source of truth. | You edit it, and so does the Companion |
-
-**Five card states:**
-
-```
-·  draft     an idea being shaped
-○  ready     you pressed space: the Builder may take it
-◌  building  the Builder is on it
-◆  review    finished, waiting for you to look
-✓  done      you accepted it; it fades out
-```
-
-**One rule for readiness:** only you mark a card ready (Space). The Companion can draft and edit cards but never make them ready. The Builder always takes the **topmost** ready card, so order means priority.
-
-## The flow
-
-### First launch in a project
-- Fade checks for git and offers `git init` if there isn't a repository. Git is required, because review and undo depend on it.
-- The startup screen shows the full dissolving wordmark, then settles into the workspace with the Companion focused: *"What are we making?"*
-- If you'd rather jump straight in, Tab to the Builder and type a request. See "Quick cards" below.
-
-### Shaping (Companion)
-- You talk with the Companion about the idea. It reads the project, asks the questions that matter, and pushes back on fuzziness.
-- When something is concrete, it adds a card. The card appears in the conversation as `+ Notebook styling (draft)` and in Up Next.
-- You press Space on cards you're happy with. The Builder picks them up from the top.
-
-### Building (Builder)
-- The Builder posts a short step list (✓ / ◌ / ○) and keeps it updated, with the current action underneath (`└ editing src/search.ts`).
-- You can type in the Builder pane at any time. While it's building, your message steers the current card.
-- When the card is done, Fade makes a **checkpoint commit** (`fade: Search`), Fade runs its proofs, then sends it to review or quietly accepts fully verified work before starting the next ready card.
-- If the Builder gets stuck, the card goes to review with its question attached, and the Builder moves on to the next ready card. A blocked card never stalls the pipeline.
-
-### Reviewing (you)
-- v0.3 Slice A: Fade re-runs each proof after checkpointing, before the next card starts. Every agreed line must
-  have a successful proof on that checkpoint for quiet acceptance. Looks ask for a human yes/no; model claims
-  without commands are "said, not run". Missing lines fail; a turn without `fade_done` is unfinished.
-- Fully verified cards land quietly in Done with `u` to queue an undo. Failed proof claims get one automatic retry,
-  then review with the actual command output. Proofs are sequential, at most two minutes each and five minutes total.
-- Select the card in *To review* and press Enter to see the summary, how to try it, and the diff.
-- `a` **accept**: the card fades to ✓ done.
-- `r` **revise**: you write a note, and the card goes back to the top of Up Next as ready, with your note attached.
-- `u` **undo**: creates a top-priority ready card, "Undo: Search", for the Builder. The Builder reverts it intelligently, even if later cards touched the same files.
-
-### Quick cards
-Typing to the Builder while it's **idle** turns your message into a ready card at the top, and it starts right away. Everything still lives in the Plan, so there's only one model to learn.
-
-### Idle
-If the Builder finishes and nothing is ready, the bottom strip shows: *"Builder is free. Mark a card ready (space) or tell it what to do."* That's the only nudge.
+Before model calls, exact stop stops the Builder, undo undoes the last landed checkpoint, and
+ yes/y/go/ok readies a single draft or answers a single waiting question. Ambiguous targets go to Fade.
+“undo that” is also accepted by the fast path. Words replace the removed plan and review hotkeys.
 
 ## Screen
 
-### Wide (≥ 100 columns)
+At 100 columns or wider, the conversation fills the left with a read-only Now / Next / Needs you rail
+on the right only while work is building or awaiting the human. Now shows title, elapsed time, steps
+and current action. Next shows queued work when present. Needs you shows waiting results/questions
+when present. Empty sections disappear. Wrap text and unbroken paths within the panel, retaining
+hanging indentation. Narrow windows use a compact active status line. Idle conversations use the
+full width. The one-line header contains fade, folder and branch.
+The wordmark appears only in the startup splash. The window title signals “Fade · ◆ needs you”.
+Bell always rings when a new review arrives. No focus switching, Next attention ranking, runway estimate,
+shipped-today counter, recap, goal closure overlay, raw log toggle or park dialog.
+
+Keys: Enter send, Esc stop the reply, PgUp/PgDn scroll, Ctrl+C twice quit. First press clears input
+and warns; a second within 1.5 seconds quits. Expiry or new input requires a fresh double press.
+The warning applies to overlays and startup too. `?` on an empty line opens help.
+Commands: `/model` (Builder or Fade), `/login`, `/new`, `/show`, `/help`, `/quit`.
+Pi skills and prompt templates pass through. Pi's handoff screens are removed; run Pi in another terminal.
+`/login` directs the user there. Help, ModelPicker and read-only Show are the surviving overlays.
+Show contains summary, checks with real passing/failing output, files and diff in one scrollable view.
+Quietly accepted reviews remain inspectable, including after restart.
+
+## Landing
+
+Pure `landingMessage(review)` produces conversation entries for verified, look, failed, said, unfinished
+and no-check results. Verified messages describe the checked outcome in plain words; shell commands
+and actual output belong in Show. Look messages ask the human's
+questions. Claimed checks say what Fade could not check and how to try it. Failed claims get one retry
+and a message saying so. Stopped or unfinished work invites “continue” or a correction.
+After a minute of inactivity, an empty idle composer quietly asks what the human wants next.
+This is a placeholder, not a new message or model turn. No automatic focus changes or overlays.
+
+## Useful capabilities
+
+The Builder already has shell execution. Add `fade_check(paths, tests)` for Python syntax and
+existing unittest/pytest tests, JavaScript syntax and local TypeScript project diagnostics.
+Prefer a project .venv; discover pytest configuration/functions or unittest suites. Missing runtimes,
+missing dependencies and zero discovered tests must not count as verified runtime behavior.
+Return actual output and replayable proof commands. Resolve requested files below the project root;
+filenames remain data, never interpolated shell syntax. Other languages use project-native commands.
+
+Bundle pinned pi-web-access for search, fetch and retrieval in both sessions. Keep search in the
+conversation with workflow none. Treat web content as evidence rather than instructions and cite
+useful primary sources. Network/provider availability is not guaranteed.
+Explicitly load the existing Pi MCP, tool-search and codemode extension factories for the Builder:
+SDK sessions do not inherit those CLI defaults automatically. The conversation session excludes
+arbitrary MCP, codemode and shell/edit tools.
+
+Prompts describe general behavior: inspect the project, identify its language/environment/checks,
+preserve scope and report verification gaps. Selecting an offered option authorizes that work;
+do not ask for another confirmation. Avoid wording tuned to the acceptance script's phrases.
+
+The [setup article](https://brucehopkins.dev/blog/how-to-set-up-pi-coding-agent-like-claude-code)
+informs these workload judgments; they are not measured usage percentages:
+
+- Add [pi-web-access](https://pi.dev/packages/pi-web-access) for documentation and supplied URLs.
+- Use focused diagnostics rather than defaulting to [Pi Lens](https://pi.dev/packages/pi-lens), whose
+  guards, autoformatting, scanning and native dependencies overlap Fade's own lifecycle.
+- Use existing Pi MCP support rather than another adapter.
+- Fade already supplies questions, planning and progress; duplicate packages add no useful interaction.
+- Leave the subagent framework out of the default: concurrent writers and another orchestration
+  system do not fit the bounded request/checkpoint loop. Existing MCP integrations remain configurable.
+
+## Verification and gate
+
+Source budget: about 3,800 lines. One added runtime package: pi-web-access, pinned to 0.41.0.
+Tests cover loop transitions, proof failure/conflict paths, plan parsing, rendering and real diagnostics. Run:
 
 ```
- FADE · notes-app · main                               builder · sonnet   companion · opus
-──────────────────────────────────────────────────────────────────────────────────────────
- BUILDER  Search                       ◌ 03:12  │ COMPANION
-                                                │
- ✓ Read the note store                          │ you        Could it feel more like a notebook?
- ✓ Added a search index                         │
- ◌ Wiring search into the sidebar               │ companion  Warm paper, roomy margins, quiet
- ○ Run the tests                                │            controls. Make it a card?
-   └ editing src/sidebar.tsx                    │
-                                                │ you        yes, keep it one column
-                                                │
-                                                │            + Notebook styling  (draft)
-                                                │
- ╭ note to builder ───────────────────────────╮ │ ╭ think it through ──────────────────────╮
- │                                            │ │ │ › what about typography?▌              │
- ╰────────────────────────────────────────────╯ │ ╰────────────────────────────────────────╯
-──────────────────────────────────────────────────────────────────────────────────────────
- TO REVIEW  ◆ Core notes app · 5 files · tests pass        ⏎ look  a accept  r revise  u undo
- UP NEXT    ○ Export to markdown   · Notebook styling   · Tags               shipped today 2
-──────────────────────────────────────────────────────────────────────────────────────────
- tab focus · space ready · ? help
+node node_modules/typescript/bin/tsc --noEmit -p tsconfig.test.json
+node --import tsx --test tests/*.test.ts
+npm run snapshot
 ```
 
-- The focused pane has a mint border; the others are dim. That's the only focus indicator needed.
-- The Builder pane shows the step list and the current action, not a tool log. Pressing `l` on the Builder pane toggles the raw tool output for curious moments.
-- The Companion pane is an ordinary conversation, rendered as Markdown.
-- The bottom strip is always exactly two lines (To review / Up next) plus the hint line.
+Render empty, building and needs-you at wide widths and 80×24. Hints list at most four keys. No old jargon
+or focus hints. Keep proof, retry and quiet-landing tests passing. `scripts/conversation-smoke.ts` exercises
+real Pi sessions in an isolated CLI repository using `opencode-go/deepseek-v4-flash`.
+`scripts/capabilities-smoke.ts` checks actual search/fetch and session tool boundaries without a
+model call. `scripts/python-smoke.ts` checks a real Python repair through Pi agents, independently
+rerun proofs and quiet landing in a temporary repository.
 
-### Plan focus (Tab to it)
-The bottom strip grows into the full plan list:
-
-```
- PLAN                                       ↑↓ select  space ready  ⏎ open  alt+↑↓ move  x drop
- ◆ Core notes app        review    "npm start, add a note, reload: it's still there"
- ◌ Search                building
- ○ Export to markdown    ready
- · Notebook styling      draft
- · Tags                  draft
- ✓ Project setup         done
-```
-
-`⏎` on a draft or ready card opens it for editing, inline or in `$EDITOR`.
-
-### Narrow (< 100 columns)
-One pane at a time, with a tab row `Builder ◌ · Companion · Plan`, and the same two-line bottom strip compressed to one line each. Measure the exact breakpoint with render tests.
-
-### Keys (the whole list)
-
-| Key | Action |
-|---|---|
-| Tab / Shift+Tab | Cycle focus: Builder → Companion → Plan |
-| Enter | Send (in a composer) / open (in the Plan) |
-| Space | Toggle ready (in the Plan) |
-| Alt+↑ / Alt+↓ | Reorder a card |
-| a / r / u | Accept / revise / undo a review card |
-| x | Drop a card (asks to confirm) |
-| l | Toggle raw Builder output |
-| Esc | Stop the focused agent's current turn |
-| ? | Help overlay |
-| Ctrl+C ×2 | Quit (state is always saved) |
-
-No slash commands in v0.1. `/model` may come later.
-
-## PLAN.md format
-
-Readable and editable by hand. Fade watches the file and picks up your edits live.
-
-```markdown
-# Plan
-
-## [building] Search
-Search notes by title and body as you type.
-Done when: typing "gro" shows "Groceries".
-
-## [ready] Export to markdown
-One .md file per note in ./export.
-
-## [draft] Notebook styling
-Warm paper, roomy margins, one column. Open: serif or mono?
-
-## Done
-- Core notes app (a1b2c3d)
-- Project setup (9f8e7d6)
-```
-
-- The heading is `## [state] Title`, and the body is free text. "Done when:" is encouraged, not required.
-- Order is priority. The title is the card's identity; if you rename a card by hand, Fade treats it as a new card.
-- Review details (summary, how to try it, commit sha) live in `.fade/state.json`, so the plan stays clean.
-
-## Under the hood
-
-### Architecture
-Own the screen with `pi-tui` (`TUI`, `ProcessTerminal`, `Editor`, `Markdown`) and run **two Pi SDK sessions** with `createAgentSession`. Don't embed or hijack Pi's InteractiveMode: that's where most of the old complexity came from.
-
-- **Login:** you run `pi` once to log in. Fade reuses Pi's credentials from the shared agent directory. Models are chosen with `--builder` / `--companion` or `.fade/config.json`, falling back to Pi's default model.
-- **Builder session:** stock Pi tools (read, write, edit, bash) plus three custom tools:
-  - `steps(list)`: sets the visible checklist
-  - `done(summary, howToTry)`: finishes the card
-  - `stuck(question)`: sends the card to review with a question
-
-  It's **one long-lived session** across cards, using Pi's compaction, so the Builder remembers the project. Each card arrives as a normal user message: the card text plus a short pointer to `PLAN.md`. If a turn ends without `done` or `stuck`, the card goes to review, with the Builder's last message as the summary.
-- **Companion session:** read-only Pi tools (read, grep, find, ls) plus `add_card`, `edit_card` and `read_plan`. It can't mark cards ready, write files or run a shell. Before each turn it gets a short ambient context: the current card and its steps, the review queue, and the Plan.
-- **Checkpoints:** when a card finishes, run `git add -A && git commit -m "fade: <title>"`. The diff for review is `git show <sha>`. Undo is delegated to the Builder as a card.
-
-### Modules and size budget
-The target for v0.1 is **about 2,000 lines of source**. If it grows past that, simplify instead of adding more.
-
-| File | Job | ~Lines |
-|---|---|---|
-| `src/plan.ts` | Parse and write `PLAN.md`, watch the file | 150 |
-| `src/loop.ts` | Card state machine: pick the next ready card, handle done/stuck, accept/revise/undo | 150 |
-| `src/builder.ts` | Builder Pi session and custom tools; emits steps and activity events | 200 |
-| `src/companion.ts` | Companion Pi session, read-only tools, card tools, ambient context | 150 |
-| `src/git.ts` | Checkpoint commit, diff stat, show | 80 |
-| `src/state.ts` | `.fade/state.json` (review metadata, shipped count) | 60 |
-| `src/ui/*` | Layout, Builder pane, Companion pane, bottom strip, Plan view, help, theme and wordmark | 900 |
-| `src/cli.ts` | Flags, startup checks, launch | 60 |
-
-**Bring across from the old code:** `wordmark()` and the mint/lavender/ivory palette from `workspace-ui.ts`, the Pi session/model resolution bits from `pi.ts`, and the terminal text sanitizer from `terminal-text.ts` if it's still needed. Leave everything else behind.
-
-### Tests
-- Unit tests for `plan.ts` (parse/write round trip, hand edits) and `loop.ts` (state transitions with fake agents).
-- Headless render snapshots at 120×40 and 80×24 for the main states: empty, building, review waiting, idle.
-- Nothing else in v0.1. The real gate for each phase is its "Try it" check.
-
-## What we're dropping
-
-Receipts and their 8-state input lifecycle; word-for-word quote provenance; the authorization regex; execution leases; immutable briefs and redirect machinery; the 50-command catalog; plain/line mode; image attachment limits UI; bug-report export; state migrations; run limits; usage/cost display; release packaging and qualification. They solved problems the product didn't have yet, and they buried the one it did. All of it is preserved on `archive/contract-era`.
-
-## Phases
-
-Each phase ends with a **Try it** check: a real person doing a real thing. Don't start the next phase until it passes.
-
-### Phase 0: Clean slate (≈ half a day)
-- Commit the current uncommitted work to a new branch, `archive/contract-era`. (This needs the owner's go-ahead.)
-- Start a `rebuild` branch. Remove the old `src/`, `tests/`, `docs/`, `work-orders/`, `scripts/` and release files from it, keeping `LICENSE` and the notices. Trim `package.json` to its real dependencies.
-- Replace `AGENTS.md` with the short version below. Remove `IMPLEMENTATION_STATUS.md`.
-- **Try it:** `git log` on `rebuild` is clean, and `AGENTS.md` fits on one screen.
-
-### Phase 1: The loop, with an ugly UI
-- `plan.ts`, `loop.ts`, `builder.ts`, `git.ts`, `state.ts`, and a plain single-column screen that streams Builder activity and lists the plan.
-- **Try it:** hand-write three cards in `PLAN.md` and mark two ready. Run `fade` and walk away. Come back to two commits, two cards in review, and one draft untouched. Then accept one and revise the other, and watch it rebuild.
-
-### Phase 2: The Fade screen
-- The two-pane layout, step timeline, bottom strip, Plan focus, review actions, every key in the table, and the narrow layout.
-- **Try it:** while a card builds, chat in the Companion pane, reorder the plan and review the previous card. Nothing steals focus, typing never lags, and accept/revise/undo all work.
-
-### Phase 3: The Companion as co-author
-- Card tools, ambient context, and the Companion prompt. **The Companion's personality is the soul of the product,** so budget real iteration: run real sessions, read the transcripts, adjust.
-- **Try it:** go from a fuzzy idea ("a tiny habit tracker") to three good cards in under five minutes, with no form-filling feeling.
-
-### Phase 4: Feel pass
-- The startup wordmark, the fade-out animation for accepted cards, "shipped today", the idle nudge, the stuck flow, the help overlay, resizing, and Windows Terminal checks (the owner is on Windows).
-- **Try it:** use Fade for a full hour on a real project and write down every moment of friction. Fix the top five.
-
-### Phase 5: Ready to share
-- First-run onboarding, model selection, one-command install, a README with a GIF, and a short manifesto.
-- **Try it:** a friend installs it and ships a card without any help.
-
-## AGENTS.md (replacement, use as-is)
-
-```markdown
-# Fade
-
-Read docs/rebuild-plan.md first. It is the only spec.
-
-- Build only the current phase. Stop at its "Try it" check and report how to try it.
-- Every change must be something a user can see or feel. If you can't demo it, don't build it.
-- Source budget for v0.1 is ~2,000 lines. Over budget means simplify, not expand.
-- Write plain, readable TypeScript: normal line lengths, one statement per line, small functions.
-- No new concepts, states, commands, config or safety machinery beyond the plan. Git is the undo.
-- When a UX choice is unclear, pick the simpler one and say so in your report.
-- Tests: plan parser, loop transitions, render snapshots. Nothing else unless asked.
-- Don't commit, push or publish unless the human asks.
-```
-
-## Making it spread (Phase 5 and after)
-
-- **The hook is one sentence and one GIF.** *"Stop waiting on your AI. Plan the next thing while it builds this one."* The 30-second demo: type a fuzzy idea, the Companion makes three cards, press Space twice, the Builder builds while you shape a fourth, then accept, and the card fades out.
-- **The look is the brand.** The dissolving wordmark and the cards fading on accept make Fade instantly recognizable in screenshots.
-- **Bring your own model.** Pi supports cloud and local providers, which makes Fade interesting to the local-model crowd as well as Claude/GPT users.
-- **The manifesto.** A short post: *"The new bottleneck: code is cheap, clarity isn't."* That's the idea people share, with Fade as its proof.
-- **Channels:** Show HN, X, r/LocalLLaMA and r/ChatGPTCoding, and the Pi community.
-- **Name and SEO, to decide later:** "fade" is hard to search for, and the npm name `fade` is taken.
-
-## Open questions and risks
-
-- **Checkpoint commits land on your current branch.** They make review and undo simple. The recommended default is on, with an opt-out. An alternative would be a `fade/` working branch.
-- **Your own edits during a build** get included in the next checkpoint commit. Acceptable for v0.1; revisit after Phase 4.
-- **Unreviewed cards piling up:** start without a cap and see whether it's a problem in real use.
-- **Losing Pi's native `/model` and `/login` dialogs:** use `pi` for login and flags/config for models. Add a small picker in Phase 5 if people need one.
-- **Windows rendering:** check Windows Terminal from Phase 2 onward, not at the end.
-
-## v0.3 Slice A try-it gate
-
-Implemented first: proof execution, honest verdicts, one automatic retry, read-back for quick cards and quiet
-landing with undo. Slices B/C and the remaining waiting rules are gated on this real-project check.
-
-Run Fade on a small real repository and request "add a --version flag". Confirm the read-back, a proof run on the
-checkpoint, quiet Done, and `u` queuing a revert for that sha. Then request a change with a deliberately failing
-proof: one retry, then a failed review showing real output. Also inspect a visual look and an unfinished turn.
-Check proof timeouts in Windows Terminal. Human real-Pi validation is pending; do not start Slice B until it passes.
-
-Slice A automated verification: TypeScript (`node node_modules/typescript/bin/tsc --noEmit -p tsconfig.test.json`)
-passed; full suite (`node --import tsx --test tests/*.test.ts`) passed 93/93, followed by the new stop-during-proof
-regression (`node --import tsx --test --test-name-pattern="stopping proof" tests/loop.test.ts`) passing 1/1.
-Snapshots (`node --import tsx scripts/snapshot.ts`) passed and were inspected at 120x40 and 80x24.
-The Windows process-tree timeout test passed. The real-Pi/Windows Terminal human gate remains pending.
-
-The Slice A technical live check was subsequently exercised with real Pi sessions using
-`opencode-go/deepseek-v4-flash`. See [live test results](v0.3-slice-a-live-test.md) for failures found, prompt fixes,
-successful quiet landing and undo, real failed-proof handling, Windows PTY review smoke test, and the remaining
-real-user study. The final automated suite passed 94/94 tests.
+**Try it (human gate):** run `fade --demo`, then a real Pi session on a small repo: “add a --version flag” →
+“On it” → ✓ describing the checked outcome → “undo that” → reverted. Then “make the help text friendlier” → a question →
+“the second one” → built → “yes” to the look. A first-time user must complete this without opening help or
+pressing anything except typing, Enter and Esc. Automated checks cannot pass this human gate.

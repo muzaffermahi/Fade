@@ -43,28 +43,12 @@ export class PlanModel {
     return makeUniqueTitle(this.plan.cards.filter(card => card !== except), title);
   }
 
-  /** Swaps a card with its neighbour. Returns false at the ends. */
-  move(title: string, direction: -1 | 1): boolean {
-    const cards = this.plan.cards;
-    const index = cards.findIndex(card => card.title === title);
-    const a = cards[index];
-    const b = cards[index + direction];
-    if (!a || !b) return false;
-    cards[index] = b;
-    cards[index + direction] = a;
-    return true;
-  }
-
   add(title: string, body: string, state: Card['state'] = 'draft', top = false): string {
     const unique = this.unique(title.trim() || 'Untitled');
     const card: Card = { title: unique, state, body: body.trim() };
     if (top) this.plan.cards.unshift(card);
     else this.plan.cards.push(card);
     return unique;
-  }
-
-  setGoal(text: string): void {
-    this.plan.goal = text.replace(/\s+/g, ' ').trim();
   }
 
   park(text: string): void {

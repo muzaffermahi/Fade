@@ -2,14 +2,17 @@ import { existsSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  createCodemodeExtension, createMcpExtension, createToolSearchExtension,
   DefaultResourceLoader, getAgentDir, ModelRuntime,
 } from '@earendil-works/pi-coding-agent';
+
+export const WEB_TOOLS = ['web_search', 'fetch_content', 'get_search_content', 'web_enable'];
 
 export async function createRuntime(): Promise<ModelRuntime> {
   return ModelRuntime.create(); // uses ~/.pi/agent auth, shared with the `pi` CLI
 }
 
-/** Path to Pi's own CLI (bundled with the SDK), for logins and screens Fade hands off to. */
+/** Path to Pi's own CLI (bundled with the SDK), for the standalone fade login command. */
 export function piCliPath(): string | undefined {
   try {
     const entry = fileURLToPath(import.meta.resolve('@earendil-works/pi-coding-agent'));
@@ -28,10 +31,13 @@ export function resolveModel(runtime: ModelRuntime, selector?: string) {
   return model;
 }
 
-export async function loader(cwd: string, rolePrompt: string): Promise<DefaultResourceLoader> {
+export async function loader(cwd: string, rolePrompt: string, builder = false): Promise<DefaultResourceLoader> {
   const resourceLoader = new DefaultResourceLoader({
     cwd,
     agentDir: getAgentDir(),
+    additionalExtensionPaths: [join(dirname(fileURLToPath(import.meta.resolve('pi-web-access/package.json'))), 'dist', 'index.js')],
+    extensionFactories: builder
+      ? [createCodemodeExtension({ models: false }), createToolSearchExtension(), createMcpExtension()] : [],
     appendSystemPromptOverride: base => [...base, rolePrompt],
   });
   await resourceLoader.reload();
@@ -95,10 +101,10 @@ export function humanError(raw: string): string {
   if (AUTH_TROUBLE.test(text)) {
     const provider = /for ([a-z0-9-]+)[:.]/i.exec(text)?.[1] ?? /provider[ "']+([a-z0-9-]+)/i.exec(text)?.[1];
     const who = provider ? `Your ${provider} login` : 'The model login';
-    return `${who} has expired or is missing. Type /login in this pane (or run fade login), then try again.`;
+    return `${who} has expired or is missing. Run fade login in another terminal, restart Fade, then try again.`;
   }
   if (/insufficient (account )?funds|insufficient_quota|\b402\b|credit balance|out of credits/i.test(text)) {
-    return 'That provider account is out of credits. Top it up, or switch with /model in this pane.';
+    return 'That provider account is out of credits. Top it up, or switch models with /model.';
   }
   if (/econnrefused|fetch failed|enotfound|network/i.test(text)) {
     return 'Could not reach the model provider. Check your connection (or that your local model server is running).';
@@ -114,5 +120,6 @@ export function humanError(raw: string): string {
 export function lastRunError(messages: readonly unknown[]): string | undefined {
   const last = messages[messages.length - 1];
   if (!isRecord(last) || last.role !== 'assistant' || last.stopReason !== 'error') return undefined;
-  return typeof last.errorMessage === 'string' && last.errorMessage ? humanError(last.errorMessage) : 'the model request failed';
+  return typeof last.errorMessage === 'string' && last.errorMessage
+    ? humanError(last.errorMessage) : 'the model request failed';
 }

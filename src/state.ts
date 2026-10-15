@@ -1,23 +1,17 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Review, TranscriptEntry } from './types.js';
+import type { Check, Review, TranscriptEntry } from './types.js';
 
 export interface FadeState {
   reviews: Review[];
+  landedReviews: Review[];
   retried: string[];
   shipped: { date: string; count: number };
   companion: TranscriptEntry[];
-  /** How long recent cards took to build, in ms, newest last. Feeds the runway estimate. */
-  durations: number[];
-  /** Titles shipped under the current goal, for the progress line and the closure card. */
-  goalShipped: string[];
-  goalStartedAt: number;
-  /** Ring the terminal bell when something new needs you. */
-  bell: boolean;
+
 }
 
 const MAX_TRANSCRIPT = 200;
-const MAX_DURATIONS = 20;
 
 export function today(): string {
   const now = new Date();
@@ -27,13 +21,8 @@ export function today(): string {
 
 function emptyState(): FadeState {
   return {
-    reviews: [], retried: [], shipped: { date: today(), count: 0 }, companion: [],
-    durations: [], goalShipped: [], goalStartedAt: Date.now(), bell: true,
+    reviews: [], landedReviews: [], retried: [], shipped: { date: today(), count: 0 }, companion: [],
   };
-}
-
-function numbers(value: unknown): number[] {
-  return Array.isArray(value) ? value.filter((n): n is number => typeof n === 'number' && Number.isFinite(n)) : [];
 }
 
 function strings(value: unknown): string[] {
@@ -44,6 +33,30 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
+function optionalText(value: unknown): boolean {
+  return value === undefined || typeof value === 'string';
+}
+
+function isCheck(value: unknown): value is Check {
+  if (!isRecord(value) || typeof value.criterion !== 'string' || typeof value.passed !== 'boolean') return false;
+  if (![value.evidence, value.proof, value.look].every(optionalText)) return false;
+  const ran = value.ran;
+  return ran === undefined || (isRecord(ran) && typeof ran.code === 'number' && typeof ran.tail === 'string'
+    && typeof ran.ms === 'number' && optionalText(ran.sha));
+}
+
+function isReview(value: unknown): value is Review {
+  if (!isRecord(value) || typeof value.title !== 'string' || typeof value.summary !== 'string'
+    || typeof value.howToTry !== 'string' || typeof value.finishedAt !== 'number') return false;
+  if (typeof value.verdict !== 'string'
+    || !['verified', 'look', 'failed', 'said', 'unfinished', 'none'].includes(value.verdict)) return false;
+  if (![value.sha, value.question, value.tryCommand].every(optionalText)) return false;
+  if (!Array.isArray(value.files) || !value.files.every(f => typeof f === 'string')) return false;
+  if (value.doneWhen !== undefined
+    && (!Array.isArray(value.doneWhen) || !value.doneWhen.every(s => typeof s === 'string'))) return false;
+  return value.checks === undefined || (Array.isArray(value.checks) && value.checks.every(isCheck));
+}
+
 function parseState(text: string): FadeState {
   const state = emptyState();
   const raw: unknown = JSON.parse(text);
@@ -51,16 +64,13 @@ function parseState(text: string): FadeState {
   // NOTE: the file is written only by Fade; we trust the shape after these array/object checks.
   if (Array.isArray(raw.reviews)) state.reviews = raw.reviews as Review[];
   if (Array.isArray(raw.companion)) state.companion = raw.companion as TranscriptEntry[];
+  if (Array.isArray(raw.landedReviews)) state.landedReviews = raw.landedReviews.filter(isReview);
   const shipped = raw.shipped;
   if (isRecord(shipped) && typeof shipped.date === 'string' && typeof shipped.count === 'number') {
     state.shipped = { date: shipped.date, count: shipped.count };
   }
   state.retried = strings(raw.retried);
   for (const review of state.reviews) review.verdict ??= 'said';
-  state.durations = numbers(raw.durations).slice(-MAX_DURATIONS);
-  state.goalShipped = strings(raw.goalShipped);
-  if (typeof raw.goalStartedAt === 'number') state.goalStartedAt = raw.goalStartedAt;
-  if (typeof raw.bell === 'boolean') state.bell = raw.bell;
   return state;
 }
 
@@ -86,10 +96,6 @@ export class StateStore {
 
   rollDate(): void {
     if (this.data.shipped.date !== today()) this.data.shipped = { date: today(), count: 0 };
-  }
-
-  recordDuration(ms: number): void {
-    this.data.durations = [...this.data.durations, ms].slice(-MAX_DURATIONS);
   }
 
   save(): void {

@@ -8,13 +8,18 @@ import { BUILDER_PROMPT, cardMessage } from './prompts.js';
 import {
   assistantText, describeTool, errorMessage, lastRunError, loader, resolveModel, textDelta,
 } from './pi.js';
+import { checkTool } from './checks.js';
+import { WEB_TOOLS } from './pi.js';
 import { PiSlash } from './slash.js';
 
 // Local and small models often answer in prose instead of calling tools; then nothing gets built.
 const WEAK_TOOLS = 'The Builder model replied without using any tools, so nothing was built. ' +
-  'Builders need strong tool calling: switch with /model in this pane (a weaker model can still be a fine Companion).';
+  'Builders need strong tool calling: switch with /model builder (a weaker model can still be a fine Companion).';
 
-const TOOL_NAMES = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'fade_understood', 'fade_steps', 'fade_done', 'fade_stuck'];
+export const BUILDER_TOOLS = [
+  'read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'fade_steps', 'fade_done', 'fade_stuck',
+  'fade_check', 'tool_search', 'codemode', ...WEB_TOOLS,
+];
 
 export interface PiBuilderOptions {
   cwd: string;
@@ -41,9 +46,7 @@ export class PiBuilder implements BuilderAgent {
     this.slash = new PiSlash({
       session: () => this.session,
       runtime: opts.runtime,
-      sessionDir: this.sessionDir,
       fresh: () => this.open(true),
-      reopen: () => this.open(false),
       ...(opts.onModelChange ? { onModelChange: opts.onModelChange } : {}),
       acceptsPrompts: false,
     });
@@ -73,9 +76,9 @@ export class PiBuilder implements BuilderAgent {
       cwd: this.opts.cwd,
       modelRuntime: this.opts.runtime,
       ...(model ? { model } : {}),
-      tools: TOOL_NAMES,
+      tools: BUILDER_TOOLS,
       customTools: this.customTools(),
-      resourceLoader: await loader(this.opts.cwd, BUILDER_PROMPT),
+      resourceLoader: await loader(this.opts.cwd, BUILDER_PROMPT, true),
       sessionManager: fresh ? SessionManager.create(this.opts.cwd, dir) : SessionManager.continueRecent(this.opts.cwd, dir),
     });
     await session.bindExtensions({});
@@ -142,16 +145,7 @@ export class PiBuilder implements BuilderAgent {
         return { content: [{ type: 'text', text: 'Recorded. Stop now.' }], details: undefined };
       },
     });
-    const understoodTool = defineTool({
-      name: 'fade_understood', label: 'Understood',
-      description: 'For a card without Done-when lines, read back the requested outcome before building.',
-      parameters: Type.Object({ outcome: Type.String(), assumptions: Type.Optional(Type.Array(Type.String())), doneWhen: Type.Array(Type.String(), { minItems: 1 }) }),
-      execute: async (_id, params) => {
-        this.emit({ type: 'understood', ...params });
-        return { content: [{ type: 'text', text: 'Read-back recorded. Continue building.' }], details: undefined };
-      },
-    });
-    return [understoodTool, stepsTool, doneTool, stuckTool];
+    return [stepsTool, doneTool, stuckTool, checkTool(this.opts.cwd)];
   }
 
   private onSessionEvent(event: { type: string } & Record<string, unknown>): void {

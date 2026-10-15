@@ -9,8 +9,6 @@ export interface PaneOptions {
   /** Lines scrolled up from the bottom; 0 follows the newest content. */
   scroll: number;
   now: number;
-  /** The pane may show the big wordmark in its empty state (when there's no banner above). */
-  showMark?: boolean;
 }
 
 /** The editor's own lines, with the cursor hidden when unfocused and a placeholder when empty. */
@@ -23,13 +21,6 @@ export function editorBlock(editor: Editor, width: number, focused: boolean, pla
     return lines.map(line => line.replace(CURSOR_MARKER, '').replace('\x1b[7m \x1b[0m', ' '));
   }
   return lines;
-}
-
-export function paneHeader(
-  name: string, color: (s: string) => string, focused: boolean, title: string, right: string, width: number,
-): string {
-  const dot = focused ? ` ${c.mint('●')}` : '';
-  return spread(` ${color(name)}${dot}${title}`, `${right} `, width, visibleWidth);
 }
 
 export interface Viewport {

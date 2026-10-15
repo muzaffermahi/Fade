@@ -53,7 +53,6 @@ export class CompanionChat {
     }
     // Card entries store just the title; the pane looks up the card's live state when it draws them.
     if (event.type === 'card') this.push({ role: 'card', text: event.title });
-    if (event.type === 'goal') this.push({ role: 'goal', text: event.text });
     if (event.type === 'parked') this.push({ role: 'parked', text: event.text });
     if (event.type === 'tool') this.push({ role: 'tool', text: event.text });
     if (event.type === 'error') this.push({ role: 'error', text: `Companion: ${event.text}` });

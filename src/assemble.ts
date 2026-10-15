@@ -9,14 +9,21 @@ export interface Agents {
   companion: CompanionAgent;
 }
 
-/** The Companion's view of the plan. Cards it writes become the "ready it?" suggestion. */
+/** Fade's card and work actions, forwarded to the engine. */
 export function companionPlanApi(need: () => Fade): PlanApi {
   return {
     list: () => need().list(),
+    queue: (title, body) => need().queue(title, body),
+    ready: title => need().ready(title),
+    noteBuilder: text => need().noteBuilder(text),
+    stopBuilder: () => need().stopBuilder(),
+    accept: title => need().accept(title),
+    revise: (title, body, startOver) => need().revise(title, body, startOver),
+    undo: title => need().undo(title),
+    show: title => need().show(title),
+    move: (title, toTop) => need().move(title, toTop),
     addCard: (title, body) => need().proposeCard(title, body),
-    editCard: (title, patch) => need().editCard(title, patch, true),
-    goal: () => need().model.plan.goal,
-    setGoal: text => need().setGoal(text),
+    editCard: (title, patch) => need().editCard(title, patch),
     later: () => [...need().model.plan.later],
     park: text => need().park(text),
     promote: (item, title, body) => need().promote(item, title, body),

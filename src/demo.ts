@@ -4,12 +4,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PlanStore } from './plan.js';
 import { StateStore } from './state.js';
+import { Git } from './git.js';
 
 /** Makes a throwaway git project with a sample plan, one finished card in review, and a short chat. */
-export function createDemoWorkspace(): string {
+export function createDemoWorkspace(empty = false): string {
   const cwd = mkdtempSync(join(tmpdir(), 'fade-demo-'));
   const git = (...args: string[]): string => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: 'pipe' });
   git('init', '-q');
+  new Git(cwd).excludeFade();
   git('config', 'user.name', 'Fade Demo');
   git('config', 'user.email', 'demo@fade.local');
   git('config', 'commit.gpgsign', 'false');
@@ -20,6 +22,7 @@ export function createDemoWorkspace(): string {
   writeFileSync(join(cwd, 'src', 'notes.txt'), 'Groceries\nIdeas\nReading list\n');
   git('add', '-A');
   git('commit', '-q', '-m', 'Start project');
+  if (empty) return cwd;
   writeFileSync(join(cwd, 'src', 'store.txt'), 'notes are saved to disk and survive a reload\n');
   git('add', '-A');
   git('commit', '-q', '-m', 'fade: Core notes app');
@@ -27,7 +30,7 @@ export function createDemoWorkspace(): string {
 
   new PlanStore(cwd).save({
     preamble: '# Plan\n',
-    goal: 'A notes app I would actually use every day',
+    goal: '',
     cards: [
       {
         title: 'Core notes app', state: 'review',
@@ -43,17 +46,16 @@ export function createDemoWorkspace(): string {
     done: [{ title: 'Project setup' }],
   });
   const state = new StateStore(cwd);
-  state.data.goalShipped = ['Project setup'];
   state.data.reviews.push({
     title: 'Core notes app',
     summary: 'Notes can be added, edited and deleted, and they are saved to disk.',
     howToTry: 'Open src/store.txt, then reload the app: your notes are still there.',
     tryCommand: `node -e "process.stdout.write(require('fs').readFileSync('src/store.txt','utf8'))"`,
     doneWhen: ['a note survives a reload.'],
-    checks: [{ criterion: 'a note survives a reload.', passed: true, evidence: 'wrote a note, reloaded, read it back' }],
+    checks: [{ criterion: 'a note survives a reload.', passed: true, look: 'Does it feel like a notebook?' }],
     sha,
     files: ['src/store.txt'],
-    verdict: 'said',
+    verdict: 'look',
     finishedAt: Date.now(),
   });
   state.data.companion.push(
@@ -61,7 +63,7 @@ export function createDemoWorkspace(): string {
     { role: 'companion', text: 'Yes: warm paper, roomy margins, quiet controls. That is a step for after search lands.' },
     { role: 'card', text: 'Notebook styling' },
     { role: 'you', text: 'oh and export to markdown at some point, later' },
-    { role: 'companion', text: 'Parked it in Later so it does not pull us off the goal.' },
+    { role: 'companion', text: 'Saved it for later.' },
     { role: 'parked', text: 'Export to markdown' },
   );
   state.save();

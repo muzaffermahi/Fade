@@ -7,11 +7,14 @@ import { test } from 'node:test';
 import { FakeBuilder, FakeCompanion } from '../src/agents/fake.js';
 import { companionPlanApi } from '../src/assemble.js';
 import { Git } from '../src/git.js';
+import { WEB_TOOLS } from '../src/agents/pi.js';
 import { COMPANION_TOOLS } from '../src/agents/companion.js';
 import { formatCompanionContext } from '../src/agents/prompts.js';
-import { Fade, titleFromText } from '../src/loop.js';
+import { Fade } from '../src/loop.js';
 import { parsePlan, PlanStore } from '../src/plan.js';
 import { StateStore } from '../src/state.js';
+import { landingMessage } from '../src/view.js';
+import type { Review } from '../src/types.js';
 
 function makeRepo(plan: string): string {
   const cwd = mkdtempSync(join(tmpdir(), 'fade-test-'));
@@ -27,10 +30,10 @@ function makeRepo(plan: string): string {
   return cwd;
 }
 
-function makeFade(cwd: string, builder?: FakeBuilder): Fade {
+function makeFade(cwd: string, builder?: FakeBuilder, gitOverride?: Git): Fade {
   const plans = new PlanStore(cwd);
   const state = new StateStore(cwd);
-  const git = new Git(cwd);
+  const git = gitOverride ?? new Git(cwd);
   git.excludeFade();
   const fadeRef: { current?: Fade } = {};
   const api = companionPlanApi(() => {
@@ -160,7 +163,7 @@ test('accept: review -> done with sha, counter goes up', async () => {
   assert.deepEqual(view.done, [{ title: 'Alpha', sha }]);
   assert.equal(view.reviews.length, 0);
   assert.equal(view.shippedToday, 1);
-  assert.equal(view.toast, 'Shipped ✓');
+  assert.equal(view.toast, '✓ Alpha is done');
   assert.match(readFileSync(join(cwd, 'PLAN.md'), 'utf8'), /## Done\n- Alpha \(/);
   fade.dispose();
 });
@@ -173,7 +176,7 @@ test('revise: back to ready at the top with the note, and rebuilds', async () =>
   fade.revise('Alpha', 'make it blue');
   await until(() => log(cwd).filter(s => s === 'fade: Alpha').length === 2, 'second checkpoint');
   await until(() => fade.view().reviews.length === 1 && fade.view().building === null);
-  assert.match(fade.view().cards[0]?.body ?? '', /> Revise: make it blue/);
+  assert.match(fade.view().cards[0]?.body ?? '', /^make it blue$/);
   fade.dispose();
 });
 
@@ -186,7 +189,7 @@ test('undo: removes the card and queues an Undo card that builds', async () => {
   fade.undo('Alpha');
   assert.equal(fade.view().cards[0]?.title, 'Undo: Alpha');
   assert.match(fade.view().cards[0]?.body ?? '', new RegExp(`commit ${sha}`));
-  await until(() => fade.view().reviews.some(r => r.title === 'Undo: Alpha'), 'undo review');
+  await until(() => fade.view().done.some(r => r.title === 'Undo: Alpha'), 'undo landing');
   assert.ok(!fade.view().cards.some(c => c.title === 'Alpha'));
   fade.dispose();
 });
@@ -204,15 +207,15 @@ test('drop removes draft, ready and review cards (not the building one)', async 
   fade.dispose();
 });
 
-test('sendToBuilder: idle makes a ready card at the top; building forwards a note', async () => {
+test('fade_queue starts at the end; fade_note_builder forwards a note', async () => {
   const cwd = makeRepo('## [draft] Existing\n');
   const fade = makeFade(cwd, new FakeBuilder(cwd, { speed: 1 }));
   fade.start();
-  fade.sendToBuilder('Add a footer to every page so people can find the contact link easily');
+  fade.queue('Footer', 'Add a footer with a contact link');
   const view = fade.view();
-  assert.equal(view.building?.title, 'Add a footer to every page so people can find');
-  assert.match(view.cards[0]?.body ?? '', /contact link easily$/);
-  fade.sendToBuilder('use blue');
+  assert.equal(view.building?.title, 'Footer');
+  assert.match(view.cards[1]?.body ?? '', /contact link$/);
+  fade.noteBuilder('use blue');
   assert.deepEqual(fade.view().building?.notes, ['use blue']);
   assert.equal(fade.view().cards.length, 2);
   await fade.stopBuilder();
@@ -264,14 +267,12 @@ test('companion messages and cards land in the transcript and plan', async () =>
   fade.dispose();
 });
 
-test('titleFromText trims at a word boundary', () => {
-  assert.equal(titleFromText('short'), 'short');
-  assert.ok(titleFromText('word '.repeat(30)).length <= 48);
-});
-
 test('the Companion only gets read-only built-in tools plus the card tools', () => {
   for (const banned of ['edit', 'write', 'bash']) assert.ok(!COMPANION_TOOLS.includes(banned), banned);
-  assert.deepEqual(COMPANION_TOOLS.filter(name => !name.startsWith('fade_')), ['read', 'grep', 'find', 'ls']);
+  assert.deepEqual(COMPANION_TOOLS.filter(name => !name.startsWith('fade_') && !WEB_TOOLS.includes(name)), ['read', 'grep', 'find', 'ls']);
+  for (const tool of ['queue', 'ready', 'note_builder', 'stop_builder', 'accept', 'revise', 'undo', 'show', 'move']) {
+    assert.ok(COMPANION_TOOLS.includes(`fade_${tool}`));
+  }
 });
 
 test('the Companion context lists the build, reviews, plan and recent work', async () => {
@@ -343,7 +344,7 @@ test('proofs: quiet landing counts as shipped and undoDone queues the exact chec
     assert.equal(view.shippedToday, 1);
     assert.equal(view.session.quiet, 1);
     assert.equal(view.lastQuiet?.sha, view.done[0]?.sha);
-    assert.match(view.toast ?? '', /verified.*u undo/);
+    assert.match(view.toast ?? '', /✓ Version is done/);
     fade.undoDone('Version');
     assert.equal(fade.view().lastQuiet, undefined);
     assert.equal(fade.view().done.length, 0);
@@ -377,23 +378,6 @@ test('proofs finish before the next build, including an explicit tick while chec
   } finally { fade.dispose(); }
 });
 
-test('quick read-back writes outcome and checks, keeps request, and never replaces agreed checks', async () => {
-  const cwd = makeRepo('## [ready] Quick\nAdd a version.\n\n## [ready] Agreed\nDone when: original.\n');
-  const builder = new FakeBuilder(cwd);
-  builder.build = async (_card, _context, emit) => {
-    emit({ type: 'understood', outcome: 'Show the version.', assumptions: ['CLI only.'], doneWhen: ['version visible.'] });
-    return { kind: 'unfinished', summary: 'Turn ended.' };
-  };
-  const fade = makeFade(cwd, builder);
-  try {
-    fade.start();
-    await until(() => fade.view().reviews.length === 2);
-    assert.match(fade.view().cards[0]?.body ?? '', /Show the version.[\s\S]*Done when: version visible.[\s\S]*Original request: Add a version/);
-    assert.equal(fade.view().cards[1]?.body, 'Done when: original.');
-    assert.equal(fade.view().reviews[0]?.verdict, 'unfinished');
-  } finally { fade.dispose(); }
-});
-
 test('stopping proof execution never triggers an automatic retry or starts the next card', async () => {
   const cwd = makeRepo('## [ready] Slow proof\nDone when: it finishes.\n\n## [ready] Next\n');
   const builder = new FakeBuilder(cwd);
@@ -416,4 +400,178 @@ test('stopping proof execution never triggers an automatic retry or starts the n
     assert.equal(fade.view().cards[1]?.state, 'ready');
     assert.match(fade.view().reviews[0]?.checks?.[0]?.ran?.tail ?? '', /Stopped/);
   } finally { fade.dispose(); }
+});
+
+
+test('v0.4 yes readies the only proposal; two proposals send yes to Fade', async () => {
+  const cwd = makeRepo('');
+  const fade = makeFade(cwd, new FakeBuilder(cwd, { speed: 1 }));
+  try {
+    fade.proposeCard('Only', 'One thing.');
+    fade.sendToCompanion('yes');
+    assert.equal(fade.view().building?.title, 'Only');
+    assert.equal(fade.view().companion.at(-1)?.role, 'you');
+    fade.proposeCard('A', 'a'); fade.proposeCard('B', 'b');
+    fade.sendToCompanion('yes');
+    await until(() => !fade.view().companionBusy);
+    assert.ok(fade.view().companion.some(e => e.role === 'companion'));
+    assert.equal(fade.view().cards.find(c => c.title === 'A')?.state, 'draft');
+  } finally { fade.dispose(); }
+});
+
+test('v0.4 stop stops only the current build and does not start the next', async () => {
+  const cwd = makeRepo('## [ready] First\n\n## [ready] Second\n');
+  const fade = makeFade(cwd, new FakeBuilder(cwd, { speed: 1 }));
+  try {
+    fade.start(); fade.sendToCompanion('stop');
+    await until(() => fade.view().building === null);
+    assert.equal(fade.view().cards.find(c => c.title === 'Second')?.state, 'ready');
+    assert.match(fade.view().companion.at(-1)?.text ?? '', /is unfinished/);
+  } finally { fade.dispose(); }
+});
+
+test('v0.4 startOver replaces body and carries the exact review checkpoint', async () => {
+  const cwd = makeRepo('## [ready] Original\nOld scope.\n');
+  const fade = makeFade(cwd);
+  try {
+    fade.start(); await until(() => fade.view().reviews.length === 1);
+    const sha = fade.view().reviews[0]?.sha;
+    await fade.revise('Original', 'New scope.', true);
+    assert.equal(fade.view().cards[0]?.body, `New scope.\n\nStart from: revert ${sha} first`);
+    assert.doesNotMatch(fade.view().cards[0]?.body ?? '', /Old scope|Revise:/);
+  } finally { fade.dispose(); }
+});
+
+test('v0.4 mid-build startOver waits for the partial checkpoint before restarting', async () => {
+  const cwd = makeRepo('## [ready] Original\nOld scope.\n');
+  const builder = new FakeBuilder(cwd, { speed: 1 });
+  const fade = makeFade(cwd, builder);
+  try {
+    fade.start();
+    writeFileSync(join(cwd, 'partial.txt'), 'wrong start');
+    await fade.revise('Original', 'Correct scope.', true);
+    const sha = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd, encoding: 'utf8' }).trim();
+    assert.equal(fade.view().cards[0]?.body, `Correct scope.\n\nStart from: revert ${sha} first`);
+    assert.equal(fade.view().building?.title, 'Original');
+  } finally { fade.dispose(); }
+});
+
+test('v0.4 verified outcome landing persists without goal completion; undo words target the checkpoint', async () => {
+  const cwd = makeRepo('# Plan\nGoal: Tiny CLI\n\n## [ready] Version\nDone when: visible.\n\n## Later\n- Export\n');
+  const builder = new FakeBuilder(cwd);
+  builder.build = async () => {
+    writeFileSync(join(cwd, 'version.txt'), '1.0.0');
+    return { kind: 'done', summary: 'Added version.', howToTry: '', checks: [{ criterion: 'visible.', passed: true, proof: 'node -e "process.exit(0)"' }] };
+  };
+  const fade = makeFade(cwd, builder);
+  try {
+    fade.start(); await until(() => fade.view().done.length === 1);
+    const view = fade.view();
+    assert.ok(view.companion.some(e => e.role === 'landed' && /✓ Version.*visible.*checked/.test(e.text)));
+    assert.ok(!view.companion.some(e => /Goal done:/.test(e.text)));
+    assert.ok(!view.companion.some(e => e.role === 'landed' && /node -e/.test(e.text)));
+    assert.equal(view.landedReviews[0]?.checks?.[0]?.ran?.code, 0);
+    const restored = makeFade(cwd);
+    try { assert.equal(restored.view().landedReviews[0]?.checks?.[0]?.ran?.code, 0); }
+    finally { restored.dispose(); }
+    const sha = view.done[0]?.sha;
+    fade.sendToCompanion('undo');
+    assert.match(fade.view().cards[0]?.body ?? '', new RegExp(`commit ${sha}`));
+  } finally { fade.dispose(); }
+});
+
+test('v0.4 yes answers a single look, but a simultaneous draft makes it ambiguous', async () => {
+  const cwd = makeRepo('## [ready] Style\nDone when: calmer.\n');
+  const builder = new FakeBuilder(cwd);
+  builder.build = async () => ({ kind: 'done', summary: 'Style.', howToTry: '', checks: [{ criterion: 'calmer.', passed: true, look: 'Does it feel calmer?' }] });
+  const fade = makeFade(cwd, builder);
+  try {
+    fade.start(); await until(() => fade.view().reviews.length === 1);
+    assert.match(formatCompanionContext(fade.view()), /NEEDS YOU:[\s\S]*Does it feel calmer/);
+    fade.proposeCard('Another', 'another');
+    fade.sendToCompanion('yes'); await until(() => !fade.view().companionBusy);
+    assert.equal(fade.view().reviews.length, 1);
+    for (const card of fade.view().cards.filter(c => c.state === 'draft')) fade.drop(card.title);
+    fade.sendToCompanion('yes');
+    assert.equal(fade.view().reviews.length, 0);
+    assert.equal(fade.view().done.at(-1)?.title, 'Style');
+  } finally { fade.dispose(); }
+});
+
+test('v0.4 landing copy covers every verdict without a model call', () => {
+  const base: Review = { title: 'Export', verdict: 'said', summary: '', howToTry: 'open ./export', files: [], finishedAt: 0,
+    checks: [{ criterion: 'files open in Obsidian.', passed: true }] };
+  assert.match(landingMessage(base), /couldn't check files open in Obsidian\. Ask/);
+  assert.match(landingMessage({ ...base, verdict: 'look', checks: [{ criterion: 'calm', passed: true, look: 'Calmer?' }] }), /Your call: Calmer/);
+  assert.match(landingMessage({ ...base, verdict: 'failed' }, true), /Sent it back once/);
+  assert.match(landingMessage({ ...base, verdict: 'unfinished' }), /Say "continue"/);
+  assert.match(landingMessage({ ...base, verdict: 'none' }), /couldn't check/);
+});
+
+test('v0.4 a correction can restart a quietly landed card from its exact checkpoint', async () => {
+  const cwd = makeRepo('');
+  const fade = makeFade(cwd);
+  try {
+    fade.queue('Small', 'Demo.\nDone when: the requested demo file exists.');
+    await until(() => fade.view().done.length === 1);
+    const sha = fade.view().done[0]?.sha;
+    await fade.revise('Small', 'Corrected scope.', true);
+    assert.equal(fade.view().cards[0]?.body, `Corrected scope.\n\nStart from: revert ${sha} first`);
+    assert.equal(fade.view().done.length, 0);
+  } finally { fade.dispose(); }
+});
+
+test('v0.4 undo targets the most recent review before an older quiet landing', async () => {
+  const cwd = makeRepo('');
+  const fade = makeFade(cwd);
+  try {
+    fade.queue('Old', 'Demo.\nDone when: the requested demo file exists.');
+    await until(() => fade.view().done.length === 1);
+    fade.queue('New', 'Demo.\nDone when: calmer.');
+    await until(() => fade.view().reviews.length === 1);
+    fade.sendToCompanion('undo');
+    assert.equal(fade.view().cards[0]?.title, 'Undo: New');
+    assert.equal(fade.view().done[0]?.title, 'Old');
+  } finally { fade.dispose(); }
+});
+
+test('v0.4 demo undo really restores the prior artifact', async () => {
+  const cwd = makeRepo('');
+  const fade = makeFade(cwd);
+  try {
+    fade.queue('Demo', 'Demo.\nDone when: the requested demo file exists.');
+    await until(() => fade.view().done.length === 1);
+    assert.ok(existsSync(join(cwd, 'fade-demo/demo.txt')));
+    fade.sendToCompanion('undo that');
+    await until(() => fade.view().done.some(d => d.title === 'Undo: Demo'));
+    assert.equal(existsSync(join(cwd, 'fade-demo/demo.txt')), false);
+  } finally { fade.dispose(); }
+});
+
+test('v0.4 a failed checkpoint stays in needs-you and explains the failure', async () => {
+  const cwd = makeRepo('## [ready] Demo\nDone when: the requested demo file exists.\n');
+  const git = new Git(cwd);
+  git.checkpoint = () => ({ error: 'invalid path: nul' });
+  const fade = makeFade(cwd, undefined, git);
+  try {
+    fade.start(); await until(() => fade.view().reviews.length === 1);
+    assert.equal(fade.view().done.length, 0);
+    assert.equal(fade.view().reviews[0]?.verdict, 'verified');
+    assert.match(fade.view().companion.at(-1)?.text ?? '', /◆ Demo passed its checks.*no checkpoint.*invalid path: nul/);
+  } finally { fade.dispose(); }
+});
+
+test('polish: checked outcomes never print the raw proof command', () => {
+  const review: Review = {
+    title: 'Search works', verdict: 'verified', summary: 'Search is available.', howToTry: '',
+    files: [], finishedAt: 0, sha: 'abc', checks: [{
+      criterion: "typing 'gro' finds Groceries", passed: true,
+      proof: 'node -e "require(123)"', ran: { code: 0, tail: '', ms: 1 },
+    }],
+  };
+  assert.equal(landingMessage(review), "✓ Search works — typing 'gro' finds Groceries (checked).");
+  assert.doesNotMatch(landingMessage({ ...review, checks: [{
+    criterion: 'node cli.js --version prints the right version', passed: true,
+    proof: 'node cli.js --version', ran: { code: 0, tail: '', ms: 1 },
+  }] }), /node|cli.js|--version/);
 });
