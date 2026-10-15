@@ -12,6 +12,7 @@ const MAX_NOTES = 3;
 
 function stepLines(view: FadeView, now: number): string[] {
   const lines: string[] = [];
+  if (view.building?.understood) lines.push(c.text(`Understood: ${sanitize(view.building.understood)}`));
   for (const step of view.building?.steps ?? []) {
     const text = sanitize(step.text);
     if (step.status === 'done') lines.push(` ${c.mint(GLYPH.done)} ${c.text(text)}`);

@@ -11,6 +11,7 @@ export interface RecapInput {
   shipped: string[];
   startedAt: number;
   commits?: number;
+  quiet?: number;
   idleMs?: number;
   /** A key hint under the card, when it's shown inside Fade. */
   footer?: string;
@@ -42,6 +43,7 @@ export function recapLines(input: RecapInput, width: number, now = Date.now()): 
   const lines = [compactMark(), ''];
   if (input.goal) lines.push(`${c.mint('◎')} ${c.text(sanitize(input.goal))}`, '');
   lines.push(c.text(statsLine(input, now)), '');
+  if (input.quiet) lines.push(c.muted(`verified quietly: ${input.quiet}`), '');
   for (const title of input.shipped.slice(0, MAX_LISTED)) lines.push(`${c.mint(GLYPH.done)} ${c.text(sanitize(title))}`);
   if (input.shipped.length > MAX_LISTED) lines.push(c.muted(`  +${input.shipped.length - MAX_LISTED} more`));
   lines.push('', `${bold(c.mint('fade'))} ${c.muted('· get your flow back')}`);
@@ -53,6 +55,6 @@ export function recapLines(input: RecapInput, width: number, now = Date.now()): 
 export function recapInput(view: FadeView, title: string): RecapInput {
   return {
     title, goal: view.goal, shipped: view.session.shipped, startedAt: view.session.startedAt,
-    commits: view.session.commits, idleMs: view.session.idleMs,
+    quiet: view.session.quiet ?? 0, commits: view.session.commits, idleMs: view.session.idleMs,
   };
 }

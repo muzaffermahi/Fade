@@ -25,20 +25,26 @@ export interface Step {
   status: 'done' | 'active' | 'todo';
 }
 
-/** The Builder's own verdict on one "Done when" line. */
+/** One agreed criterion, its Builder claim, and any proof captured by Fade. */
 export interface Check {
   criterion: string;
   passed: boolean;
   evidence?: string;
+  proof?: string;
+  look?: string;
+  /** Captured by Fade, never supplied by the Builder. */
+  ran?: { code: number; tail: string; ms: number; sha?: string };
 }
 
 export type BuildOutcome =
   | { kind: 'done'; summary: string; howToTry: string; tryCommand?: string; checks?: Check[] }
+  | { kind: 'unfinished'; summary: string }
   | { kind: 'stuck'; question: string }
   | { kind: 'stopped' }
   | { kind: 'failed'; error: string };
 
 export type BuilderEvent =
+  | { type: 'understood'; outcome: string; assumptions?: string[]; doneWhen: string[] }
   | { type: 'steps'; steps: Step[] }
   | { type: 'action'; text: string } // e.g. "editing src/search.ts"
   | { type: 'text'; text: string } // full text of the assistant message being streamed
@@ -106,6 +112,7 @@ export interface CompanionAgent {
 }
 
 export interface Review {
+  verdict: 'verified' | 'look' | 'failed' | 'said' | 'unfinished' | 'none';
   title: string;
   summary: string;
   howToTry: string;

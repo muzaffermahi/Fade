@@ -35,7 +35,7 @@ export class CardActions {
   review(title: string): void {
     const host = this.host;
     const review = host.fade.view().reviews.find(r => r.title === title)
-      ?? { title, summary: 'Ready for a look.', howToTry: '', files: [], finishedAt: Date.now() };
+      ?? { verdict: 'none' as const, title, summary: 'Ready for a look.', howToTry: '', files: [], finishedAt: Date.now() };
     const diff = review.sha ? this.git.show(review.sha) : '';
     const changes = review.sha ? this.git.numstat(review.sha) : [];
     const then = (action: () => void) => () => {
@@ -111,6 +111,10 @@ export function handlePlanKey(host: PlanKeyHost, data: string): void {
   else if (matchesKey(data, 'down') || data === 'j') host.selected = Math.min(cards.length - 1, host.selected + 1);
   else if (data === 'n') return host.cards.create();
   else if (data === '?') return host.openHelp();
+  else if (data === 'u' && fade.view().lastQuiet) {
+    const title = fade.view().lastQuiet?.title;
+    if (title) fade.undoDone(title);
+  }
   else if (!card) return;
   else if (matchesKey(data, 'space')) fade.toggleReady(card.title);
   else if (matchesKey(data, 'enter')) host.cards.open(card.title);

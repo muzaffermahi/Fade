@@ -14,7 +14,7 @@ import { PiSlash } from './slash.js';
 const WEAK_TOOLS = 'The Builder model replied without using any tools, so nothing was built. ' +
   'Builders need strong tool calling: switch with /model in this pane (a weaker model can still be a fine Companion).';
 
-const TOOL_NAMES = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'fade_steps', 'fade_done', 'fade_stuck'];
+const TOOL_NAMES = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'fade_understood', 'fade_steps', 'fade_done', 'fade_stuck'];
 
 export interface PiBuilderOptions {
   cwd: string;
@@ -113,6 +113,8 @@ export class PiBuilder implements BuilderAgent {
         checks: Type.Optional(Type.Array(Type.Object({
           criterion: Type.String({ description: 'A "Done when" line from the card.' }),
           passed: Type.Boolean(),
+          proof: Type.Optional(Type.String()),
+          look: Type.Optional(Type.String()),
           evidence: Type.Optional(Type.String({ description: 'One line: what you ran or saw.' })),
         }))),
       }),
@@ -121,7 +123,9 @@ export class PiBuilder implements BuilderAgent {
         if (params.tryCommand?.trim()) outcome.tryCommand = params.tryCommand.trim();
         if (params.checks && params.checks.length > 0) {
           outcome.checks = params.checks.map(check => ({
-            criterion: check.criterion, passed: check.passed, ...(check.evidence ? { evidence: check.evidence } : {}),
+            criterion: check.criterion, passed: check.passed,
+            ...(check.proof?.trim() ? { proof: check.proof.trim() } : {}),
+            ...(check.look?.trim() ? { look: check.look.trim() } : {}), ...(check.evidence ? { evidence: check.evidence } : {}),
           }));
         }
         this.outcome = outcome;
@@ -138,7 +142,16 @@ export class PiBuilder implements BuilderAgent {
         return { content: [{ type: 'text', text: 'Recorded. Stop now.' }], details: undefined };
       },
     });
-    return [stepsTool, doneTool, stuckTool];
+    const understoodTool = defineTool({
+      name: 'fade_understood', label: 'Understood',
+      description: 'For a card without Done-when lines, read back the requested outcome before building.',
+      parameters: Type.Object({ outcome: Type.String(), assumptions: Type.Optional(Type.Array(Type.String())), doneWhen: Type.Array(Type.String(), { minItems: 1 }) }),
+      execute: async (_id, params) => {
+        this.emit({ type: 'understood', ...params });
+        return { content: [{ type: 'text', text: 'Read-back recorded. Continue building.' }], details: undefined };
+      },
+    });
+    return [understoodTool, stepsTool, doneTool, stuckTool];
   }
 
   private onSessionEvent(event: { type: string } & Record<string, unknown>): void {
@@ -180,8 +193,8 @@ export class PiBuilder implements BuilderAgent {
       if (this.outcome) return this.outcome;
       const runError = lastRunError(session.messages);
       if (runError) return { kind: 'failed', error: `Builder couldn't continue: ${runError}` };
-      if (this.toolCalls === 0) return { kind: 'failed', error: WEAK_TOOLS };
-      return { kind: 'done', summary: session.getLastAssistantText() ?? 'Finished.', howToTry: '' };
+      if (this.toolCalls === 0) return { kind: 'unfinished', summary: WEAK_TOOLS };
+      return { kind: 'unfinished', summary: session.getLastAssistantText() ?? 'The turn ended without fade_done.' };
     } catch (error) {
       if (this.stopped) return { kind: 'stopped' };
       return { kind: 'failed', error: `Builder couldn't continue: ${errorMessage(error)}` };

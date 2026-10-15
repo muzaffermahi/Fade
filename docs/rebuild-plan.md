@@ -67,10 +67,15 @@ These are rules, not aspirations. When an implementation choice is unclear, thes
 ### Building (Builder)
 - The Builder posts a short step list (✓ / ◌ / ○) and keeps it updated, with the current action underneath (`└ editing src/search.ts`).
 - You can type in the Builder pane at any time. While it's building, your message steers the current card.
-- When the card is done, Fade makes a **checkpoint commit** (`fade: Search`), the card moves to *To review* with a one-line summary and "how to try it", and the Builder immediately starts the next ready card.
+- When the card is done, Fade makes a **checkpoint commit** (`fade: Search`), Fade runs its proofs, then sends it to review or quietly accepts fully verified work before starting the next ready card.
 - If the Builder gets stuck, the card goes to review with its question attached, and the Builder moves on to the next ready card. A blocked card never stalls the pipeline.
 
 ### Reviewing (you)
+- v0.3 Slice A: Fade re-runs each proof after checkpointing, before the next card starts. Every agreed line must
+  have a successful proof on that checkpoint for quiet acceptance. Looks ask for a human yes/no; model claims
+  without commands are "said, not run". Missing lines fail; a turn without `fade_done` is unfinished.
+- Fully verified cards land quietly in Done with `u` to queue an undo. Failed proof claims get one automatic retry,
+  then review with the actual command output. Proofs are sequential, at most two minutes each and five minutes total.
 - Select the card in *To review* and press Enter to see the summary, how to try it, and the diff.
 - `a` **accept**: the card fades to ✓ done.
 - `r` **revise**: you write a note, and the card goes back to the top of Up Next as ready, with your note attached.
@@ -279,3 +284,24 @@ Read docs/rebuild-plan.md first. It is the only spec.
 - **Unreviewed cards piling up:** start without a cap and see whether it's a problem in real use.
 - **Losing Pi's native `/model` and `/login` dialogs:** use `pi` for login and flags/config for models. Add a small picker in Phase 5 if people need one.
 - **Windows rendering:** check Windows Terminal from Phase 2 onward, not at the end.
+
+## v0.3 Slice A try-it gate
+
+Implemented first: proof execution, honest verdicts, one automatic retry, read-back for quick cards and quiet
+landing with undo. Slices B/C and the remaining waiting rules are gated on this real-project check.
+
+Run Fade on a small real repository and request "add a --version flag". Confirm the read-back, a proof run on the
+checkpoint, quiet Done, and `u` queuing a revert for that sha. Then request a change with a deliberately failing
+proof: one retry, then a failed review showing real output. Also inspect a visual look and an unfinished turn.
+Check proof timeouts in Windows Terminal. Human real-Pi validation is pending; do not start Slice B until it passes.
+
+Slice A automated verification: TypeScript (`node node_modules/typescript/bin/tsc --noEmit -p tsconfig.test.json`)
+passed; full suite (`node --import tsx --test tests/*.test.ts`) passed 93/93, followed by the new stop-during-proof
+regression (`node --import tsx --test --test-name-pattern="stopping proof" tests/loop.test.ts`) passing 1/1.
+Snapshots (`node --import tsx scripts/snapshot.ts`) passed and were inspected at 120x40 and 80x24.
+The Windows process-tree timeout test passed. The real-Pi/Windows Terminal human gate remains pending.
+
+The Slice A technical live check was subsequently exercised with real Pi sessions using
+`opencode-go/deepseek-v4-flash`. See [live test results](v0.3-slice-a-live-test.md) for failures found, prompt fixes,
+successful quiet landing and undo, real failed-proof handling, Windows PTY review smoke test, and the remaining
+real-user study. The final automated suite passed 94/94 tests.

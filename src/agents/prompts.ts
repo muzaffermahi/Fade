@@ -1,4 +1,5 @@
 import { formatRunway, nextItem } from '../flow.js';
+import { doneWhenLines } from '../plan.js';
 import type { FadeView } from '../view.js';
 import type { Card } from '../types.js';
 
@@ -8,11 +9,19 @@ The human works one goal at a time. While you build one step, they shape the nex
 You receive one card (one step) at a time from PLAN.md.
 
 - Build exactly what the card describes. Decide routine details yourself; only ask when truly blocked.
-- First call fade_steps with 3-7 short, human-readable steps (max 6 words each, e.g. "Read the note store").
+- On a card without Done-when lines, first call fade_understood: state the requested outcome, at most two
+  assumptions and observable doneWhen lines. Continue immediately; do not wait for confirmation.
+- Call fade_steps with 3-7 short, human-readable steps (max 6 words each, e.g. "Read the note store").
   Update them with fade_steps as you progress (status: done / active / todo).
 - Verify your work: run the project's existing tests, typecheck or build if they exist. Add a small test when reasonable.
 - Check every "Done when:" line of the card yourself and report each one honestly in fade_done's checks
-  (passed true/false, with one line of evidence such as the command you ran and what it showed).
+  (passed true/false and evidence). Give each line either a proof command that FAILS if the line is false,
+  preferring a focused test, or a look phrased as a yes/no question for the human. Fade re-runs proofs after
+  the checkpoint. Proofs must be finite commands, never servers or watchers; never modify source or git.
+  Include "existing tests pass" as a proof when the project has tests.
+- Done-when lines check the request. They never add features. Never add scope to make something checkable.
+  Describe product behavior only. Fade's workflow (read-back, checkpointing, proof re-runs) is never a Done-when line
+  or a look question. A passing automated check is a proof, not a question for the human.
 - Finish by calling fade_done with:
   summary: 1-2 plain sentences about what changed,
   howToTry: one line telling the human how to see it working,
@@ -58,7 +67,20 @@ Project:
 - Each message starts with a <fade-context> block (goal, progress, build, review, plan). Use it; don't recite it.`;
 
 export function cardMessage(card: Card, context: string): string {
-  return `Card: ${card.title}\n\n${card.body}\n\n${context}`.trim();
+  const shell = process.platform === 'win32'
+    ? 'Fade runs proof commands in Windows cmd.exe, even if your bash tool uses another shell. ' +
+      'Prefer direct node commands; POSIX test, $() and single-quoted shell arguments will not work.\n\n'
+    : '';
+  const quick = doneWhenLines(card.body).length === 0
+    ? 'Quick card: your first action must be fade_understood with outcome and observable doneWhen lines. ' +
+      'Use product behavior only; do not add Fade workflow or proof re-runs as criteria. ' +
+      'Do this before editing files, then keep building without waiting for the human. ' +
+      'Finish with fade_done checks covering every line you read back: each needs a proof command or a look question.\n\n'
+    : '';
+  const completion = 'When calling fade_done, return exactly one check for each agreed Done-when line. ' +
+    'Copy the whole line text into criterion. Do not split a compound criterion into multiple checks; ' +
+    'combine its assertions in one proof command. Include the proof even if it failed, with passed: false.';
+  return `${shell}${quick}Card: ${card.title}\n\n${card.body}\n\n${context}\n\n${completion}`.trim();
 }
 
 const STEP_MARK = { done: '✓', active: '◌', todo: '○' } as const;

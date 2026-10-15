@@ -9,7 +9,7 @@ import type { FadeView } from '../src/view.js';
 
 const card = (title: string, state: Card['state']): Card => ({ title, state, body: '' });
 const review = (title: string, question?: string): Review => ({
-  title, summary: 's', howToTry: '', files: [], finishedAt: 0, ...(question ? { question } : {}),
+  verdict: 'none', title, summary: 's', howToTry: '', files: [], finishedAt: 0, ...(question ? { question } : {}),
 });
 const MIN = 60_000;
 

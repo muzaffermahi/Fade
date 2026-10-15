@@ -1,8 +1,10 @@
+import { matchChecks, verdict } from './verdict.js';
 import { doneWhenLines } from './plan.js';
 import type { BuilderEvent, BuildOutcome, Card, DoneEntry, Review, Step, TranscriptEntry } from './types.js';
 
 export interface BuildingView {
   title: string;
+  understood?: string;
   steps: Step[];
   action: string;
   startedAt: number;
@@ -15,6 +17,7 @@ export interface BuildingView {
 export interface SessionStats {
   startedAt: number;
   shipped: string[];
+  quiet?: number;
   commits: number;
   /** Time the Builder sat with nothing to do, after the first card started. */
   idleMs: number;
@@ -39,6 +42,7 @@ export interface FadeView {
   companionLive?: string;
   companionBusy: boolean;
   shippedToday: number;
+  lastQuiet?: DoneEntry;
   /** Steps finished under the current goal, and steps in it overall. */
   progress: { done: number; total: number };
   /** Estimated think-time before the Builder runs out of ready work. */
@@ -99,7 +103,8 @@ export class Toast {
 export function makeReview(card: Card, outcome: BuildOutcome, saved: { sha?: string; files: string[] }): Review {
   const review: Review = {
     title: card.title,
-    summary: outcome.kind === 'done' ? outcome.summary : 'The Builder needs your answer.',
+    verdict: outcome.kind === 'unfinished' ? 'unfinished' : 'none',
+    summary: outcome.kind === 'done' || outcome.kind === 'unfinished' ? outcome.summary : 'The Builder needs your answer.',
     howToTry: outcome.kind === 'done' ? outcome.howToTry : '',
     files: saved.files,
     finishedAt: Date.now(),
@@ -107,8 +112,11 @@ export function makeReview(card: Card, outcome: BuildOutcome, saved: { sha?: str
   const doneWhen = doneWhenLines(card.body);
   if (doneWhen.length > 0) review.doneWhen = doneWhen;
   if (outcome.kind === 'done' && outcome.tryCommand?.trim()) review.tryCommand = outcome.tryCommand.trim();
-  if (outcome.kind === 'done' && outcome.checks && outcome.checks.length > 0) review.checks = outcome.checks;
   if (outcome.kind === 'stuck') review.question = outcome.question;
+  if (outcome.kind === 'done') {
+    review.checks = matchChecks(doneWhen, outcome.checks ?? []);
+    review.verdict = verdict(doneWhen, review.checks);
+  }
   if (saved.sha) review.sha = saved.sha;
   return review;
 }

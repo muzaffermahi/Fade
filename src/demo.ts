@@ -53,6 +53,7 @@ export function createDemoWorkspace(): string {
     checks: [{ criterion: 'a note survives a reload.', passed: true, evidence: 'wrote a note, reloaded, read it back' }],
     sha,
     files: ['src/store.txt'],
+    verdict: 'said',
     finishedAt: Date.now(),
   });
   state.data.companion.push(

@@ -12,8 +12,9 @@ shape the next one with the Companion, and the screen only ever shows you the **
 - **One next thing.** A single NEXT line: a blocked Builder, the step you just discussed, the step that landed, or an
   idle Builder. Enter on an empty line acts on it. Nothing changes under you while you type.
 - **Runway.** `runway ~12m` tells you how much think-time you have before the Builder runs out of ready steps.
-- **Feedback first.** A landed step opens on your own "Done when" lines with the Builder's verdict. `t` runs the try
-  command, `d` shows the diff.
+- **Feedback first.** Fade re-runs proof commands against the checkpoint. Fully proved steps land quietly with `u` to
+  undo; visual or taste checks ask for your yes/no. Unproved claims and failed checks stay visible in review.
+  `t` runs the try command, `d` shows the diff.
 - **Any model**, including local ones. Run the Companion on a local model and the Builder on your strongest.
 
 ## Quick start

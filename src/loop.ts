@@ -99,7 +99,7 @@ export class Fade extends Engine {
     return this.proposeCard(title, body);
   }
 
-  accept(title: string): void {
+  accept(title: string, { quiet = false }: { quiet?: boolean } = {}): void {
     const card = this.model.find(title);
     if (!card || card.state !== 'review') return;
     const review = this.removeReview(title);
@@ -111,7 +111,11 @@ export class Fade extends Engine {
     this.state.data.goalShipped.push(title);
     this.session.shipped.push(title);
     this.persist();
-    this.toaster.show('Shipped ✓');
+    if (quiet) {
+      this.lastQuiet = entry;
+      this.session.quiet = (this.session.quiet ?? 0) + 1;
+    }
+    this.toaster.show(quiet ? `✓ ${title} · verified · u undo` : 'Shipped ✓');
   }
 
   revise(title: string, note: string): void {
@@ -132,6 +136,20 @@ export class Fade extends Engine {
     const review = this.removeReview(title);
     this.model.remove(title);
     const sha = review?.sha ?? 'the checkpoint commit';
+    this.queueUndo(title, sha);
+  }
+
+  /** Queue an intelligent revert for an accepted checkpoint. */
+  undoDone(title: string): void {
+    const index = this.model.plan.done.findLastIndex(entry => entry.title === title);
+    const entry = this.model.plan.done[index];
+    if (!entry?.sha) return;
+    this.model.plan.done.splice(index, 1);
+    if (this.lastQuiet?.title === title) this.lastQuiet = undefined;
+    this.queueUndo(title, entry.sha);
+  }
+
+  private queueUndo(title: string, sha: string): void {
     const body = `Revert the changes from commit ${sha} ("fade: ${title}") while keeping later work intact.\n` +
       'Done when: that change is gone and the project still builds and passes its tests.';
     this.model.add(`Undo: ${title}`, body, 'ready', true);
@@ -159,6 +177,7 @@ export class Fade extends Engine {
   async stopBuilder(): Promise<void> {
     if (!this.building) return;
     this.toaster.show('Stopping…');
+    this.proofAbort?.abort();
     await this.builder.stop();
   }
 

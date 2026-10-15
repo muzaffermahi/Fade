@@ -1,3 +1,6 @@
+import { doneWhenLines } from './plan.js';
+import { runProofs } from './proof.js';
+import { verdict } from './verdict.js';
 import type { PlanStore } from './plan.js';
 import type { StateStore } from './state.js';
 import type { Git } from './git.js';
@@ -6,7 +9,7 @@ import { CompanionChat } from './companion-chat.js';
 import { runwayMs } from './flow.js';
 import { PlanModel } from './plan-model.js';
 import { applyBuilderEvent, makeReview, Toast, type BuildingView, type FadeView, type SessionStats } from './view.js';
-import type { BuilderAgent, BuilderEvent, BuildOutcome, Card, CompanionAgent, Review } from './types.js';
+import type { BuilderAgent, BuilderEvent, BuildOutcome, Card, CompanionAgent, DoneEntry, Review } from './types.js';
 
 export interface FadeOptions {
   cwd: string;
@@ -24,6 +27,11 @@ const MAX_LOG = 200;
  * and builds the view. Your actions on top of it live in Fade (loop.ts).
  */
 export abstract class Engine {
+  protected lastQuiet: DoneEntry | undefined;
+  protected proofAbort: AbortController | undefined;
+  protected readonly cwd: string;
+  abstract accept(title: string, options?: { quiet?: boolean }): void;
+
   protected building: BuildingView | null = null;
   protected lostBuildingCard: Card | undefined;
   protected starting = false;
@@ -45,6 +53,7 @@ export abstract class Engine {
   readonly model: PlanModel;
 
   constructor(opts: FadeOptions) {
+    this.cwd = opts.cwd;
     this.plans = opts.plans;
     this.state = opts.state;
     this.git = opts.git;
@@ -96,6 +105,7 @@ export abstract class Engine {
       view.goalComplete = { goal: plan.goal, steps: [...data.goalShipped], startedAt: data.goalStartedAt };
     }
     if (this.freshDraft && this.model.find(this.freshDraft)?.state === 'draft') view.freshDraft = this.freshDraft;
+    if (this.lastQuiet) view.lastQuiet = { ...this.lastQuiet };
     if (this.builderError) view.builderError = this.builderError;
     if (this.chat.live !== undefined) view.companionLive = this.chat.live;
     if (this.toaster.text) view.toast = this.toaster.text;
@@ -117,6 +127,7 @@ export abstract class Engine {
 
   dispose(): void {
     this.disposed = true;
+    this.proofAbort?.abort();
     this.stopWatching?.();
     this.toaster.dispose();
     this.saveState();
@@ -201,10 +212,19 @@ export abstract class Engine {
     } catch (error) {
       outcome = { kind: 'failed', error: messageOf(error) };
     }
-    this.finishBuild(card, outcome);
+    await this.finishBuild(card, outcome);
   }
 
   protected onBuilderEvent(event: BuilderEvent): void {
+    if (event.type === 'understood' && this.building) {
+      const card = this.model.find(this.building.title);
+      if (card && doneWhenLines(card.body).length === 0) {
+        const assumptions = (event.assumptions ?? []).slice(0, 2).map(line => `Assuming: ${line}`);
+        card.body = [event.outcome, ...assumptions, ...event.doneWhen.map(line => `Done when: ${line}`), '', `> Original request: ${card.body}`].join('\n');
+        this.building.understood = [event.outcome, ...assumptions].join(' ');
+        this.model.save();
+      }
+    }
     if (event.type === 'log') this.builderLog = [...this.builderLog, event.line].slice(-MAX_LOG);
     else if (this.building) applyBuilderEvent(this.building, event);
     this.notify();
@@ -230,17 +250,39 @@ export abstract class Engine {
     return restored;
   }
 
-  protected finishBuild(original: Card, outcome: BuildOutcome): void {
-    const card = this.takeBuildingCard(original);
+  protected async finishBuild(original: Card, outcome: BuildOutcome): Promise<void> {
+    let card = this.takeBuildingCard(original);
     const startedAt = this.building?.startedAt ?? Date.now();
-    this.building = null;
+    let quiet = false;
     let carryOn = true;
-    if (outcome.kind === 'done' || outcome.kind === 'stuck') {
-      const partial = outcome.kind === 'stuck' ? ' (partial)' : '';
+    if (outcome.kind === 'done' || outcome.kind === 'stuck' || outcome.kind === 'unfinished') {
+      const partial = outcome.kind !== 'done' ? ' (partial)' : '';
       const saved = this.checkpoint(`fade: ${card.title}${partial}`);
-      card.state = 'review';
+      this.lastQuiet = undefined;
+      const review = makeReview(card, outcome, saved);
+      if (outcome.kind === 'done') {
+        if (this.building) this.building.action = 'checking…';
+        this.notify();
+        this.proofAbort = new AbortController();
+        review.checks = await runProofs(this.cwd, review.checks ?? [], { ...saved, signal: this.proofAbort.signal });
+        const cancelled = this.proofAbort.signal.aborted;
+        this.proofAbort = undefined;
+        if (cancelled) carryOn = false;
+        card = this.takeBuildingCard(original);
+        review.verdict = verdict(review.doneWhen ?? [], review.checks);
+        // No checkpoint means no sha to undo or to associate with a quiet landing.
+        quiet = review.verdict === 'verified' && saved.sha !== undefined && !this.disposed && !cancelled;
+        const contradicted = review.checks.filter(check => check.passed && check.ran && check.ran.code !== 0);
+        if (contradicted.length > 0 && !this.state.data.retried.includes(card.title) && !this.disposed && !cancelled) {
+          this.state.data.retried.push(card.title);
+          card.body += '\n\n> Fade ran the checks:\n' + contradicted.map(check =>
+            `> ${check.criterion}: \`${check.proof}\` exited ${check.ran?.code}\n${check.ran?.tail}`).join('\n');
+          card.state = 'ready';
+          this.model.moveToTop(card);
+        } else card.state = 'review';
+      } else card.state = 'review';
       this.removeReview(card.title);
-      this.state.data.reviews.push(makeReview(card, outcome, saved));
+      if (card.state === 'review') this.state.data.reviews.push(review);
       if (outcome.kind === 'done') this.state.recordDuration(Date.now() - startedAt);
     } else if (outcome.kind === 'stopped') {
       this.checkpoint(`fade: ${card.title} (partial)`);
@@ -252,6 +294,8 @@ export abstract class Engine {
       // Sending the Builder a task (or readying a card) resumes the queue.
       carryOn = false;
     }
+    this.building = null;
+    if (quiet) this.accept(card.title, { quiet: true });
     if (carryOn) this.tick();
     if (!this.building && !this.disposed) this.idleSince = Date.now();
     this.persist();

@@ -211,6 +211,11 @@ export class FadeApp implements Component, Focusable, CommandHost, PlanKeyHost {
     const editor = this.editor();
     if (!editor || (focus !== 'builder' && focus !== 'companion')) return;
     const empty = editor.getText() === '';
+    if (data === 'u' && empty && this.fade.view().lastQuiet) {
+      const title = this.fade.view().lastQuiet?.title;
+      if (title) this.fade.undoDone(title);
+      return this.requestRender();
+    }
     if (data === '?' && empty) return this.openHelp();
     if (matchesKey(data, 'enter') && empty) return this.doNext();
     if (matchesKey(data, 'escape')) {

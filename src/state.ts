@@ -4,6 +4,7 @@ import type { Review, TranscriptEntry } from './types.js';
 
 export interface FadeState {
   reviews: Review[];
+  retried: string[];
   shipped: { date: string; count: number };
   companion: TranscriptEntry[];
   /** How long recent cards took to build, in ms, newest last. Feeds the runway estimate. */
@@ -26,7 +27,7 @@ export function today(): string {
 
 function emptyState(): FadeState {
   return {
-    reviews: [], shipped: { date: today(), count: 0 }, companion: [],
+    reviews: [], retried: [], shipped: { date: today(), count: 0 }, companion: [],
     durations: [], goalShipped: [], goalStartedAt: Date.now(), bell: true,
   };
 }
@@ -54,6 +55,8 @@ function parseState(text: string): FadeState {
   if (isRecord(shipped) && typeof shipped.date === 'string' && typeof shipped.count === 'number') {
     state.shipped = { date: shipped.date, count: shipped.count };
   }
+  state.retried = strings(raw.retried);
+  for (const review of state.reviews) review.verdict ??= 'said';
   state.durations = numbers(raw.durations).slice(-MAX_DURATIONS);
   state.goalShipped = strings(raw.goalShipped);
   if (typeof raw.goalStartedAt === 'number') state.goalStartedAt = raw.goalStartedAt;

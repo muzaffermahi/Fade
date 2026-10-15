@@ -1,3 +1,4 @@
+import { reviewLabel } from '../verdict.js';
 import { visibleWidth } from '@earendil-works/pi-tui';
 import { formatRunway, LOW_RUNWAY_MS, type NextItem } from '../flow.js';
 import type { FadeView } from '../view.js';
@@ -66,10 +67,12 @@ export function threadLine(view: FadeView, width: number): string {
 
 function reviewDetail(review: Review): string {
   const parts: string[] = [];
-  if (review.checks && review.checks.length > 0) {
-    const passed = review.checks.filter(check => check.passed).length;
-    const all = passed === review.checks.length;
-    parts.push((all ? c.mint : c.rose)(`${all ? '✓' : '✗'} ${passed}/${review.checks.length} checks`));
+  parts.push((review.verdict === 'failed' ? c.rose : c.lavender)(reviewLabel(review)));
+  if (review.verdict === 'look') {
+    const proved = review.checks?.filter(check => check.ran?.code === 0).length ?? 0;
+    if (proved) parts.push(c.mint(`✓ ${proved} proved`));
+    const question = review.checks?.find(check => check.look)?.look;
+    if (question) parts.push(c.lavender(`👁 ${sanitize(question)}`));
   }
   parts.push(c.muted(`${review.files.length} file${review.files.length === 1 ? '' : 's'}`));
   return parts.join(c.muted(' · '));
@@ -112,6 +115,9 @@ function describe(item: NextItem, view: FadeView): { text: string; action: strin
  * ("⏎" on an empty line, otherwise "ctrl+r"). A card you just accepted dissolves here.
  */
 export function nextLine(item: NextItem, view: FadeView, key: string, fading: Fading[], width: number, now: number): string {
+  if (view.lastQuiet && (item.kind === 'calm' || (item.kind === 'idle' && !item.draft))) {
+    return spread(` ${c.mint(`✓ ${sanitize(view.lastQuiet.title)} · verified`)}`, c.muted('u undo '), width, visibleWidth);
+  }
   const dying = fading.at(-1);
   const label = item.kind === 'calm' ? c.faint('NEXT') : bold(c.lavender('NEXT'));
   if (dying && now - dying.start < FADE_MS) {

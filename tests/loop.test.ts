@@ -297,3 +297,123 @@ test('the Companion transcript is restored after a restart', async () => {
   assert.equal(second.view().companion[0]?.text, 'hello there');
   second.dispose();
 });
+
+
+test('proofs: a contradicted claim retries exactly once and then shows real output', async () => {
+  const cwd = makeRepo('## [ready] Honest\nDone when: it works.\n');
+  const builder = new FakeBuilder(cwd);
+  let attempts = 0;
+  builder.build = async card => {
+    attempts++;
+    if (attempts === 2) assert.match(card.body, /Fade ran the checks:[\s\S]*real failure/);
+    writeFileSync(join(cwd, 'result.txt'), String(attempts));
+    return { kind: 'done', summary: 'Claimed done', howToTry: '', checks: [
+      { criterion: 'it works.', passed: true, proof: `node -e "console.log('real failure');process.exit(1)"` },
+    ] };
+  };
+  const fade = makeFade(cwd, builder);
+  try {
+    fade.start();
+    await until(() => fade.view().reviews.length === 1);
+    assert.equal(attempts, 2);
+    const review = fade.view().reviews[0];
+    assert.equal(review?.verdict, 'failed');
+    assert.match(review?.checks?.[0]?.ran?.tail ?? '', /real failure/);
+    assert.equal(review?.checks?.[0]?.ran?.sha, review?.sha);
+    assert.deepEqual(JSON.parse(readFileSync(join(cwd, '.fade/state.json'), 'utf8')).retried, ['Honest']);
+  } finally { fade.dispose(); }
+});
+
+test('proofs: quiet landing counts as shipped and undoDone queues the exact checkpoint', async () => {
+  const cwd = makeRepo('## [ready] Version\nDone when: the version works.\n');
+  const builder = new FakeBuilder(cwd);
+  builder.build = async card => {
+    if (card.title.startsWith('Undo:')) return { kind: 'stopped' };
+    writeFileSync(join(cwd, 'version.txt'), '0.3');
+    return { kind: 'done', summary: 'Version added', howToTry: '', checks: [
+      { criterion: 'the version works.', passed: true, proof: `node -e "if(require('fs').readFileSync('version.txt','utf8')!=='0.3')process.exit(1)"` },
+    ] };
+  };
+  const fade = makeFade(cwd, builder);
+  try {
+    fade.start();
+    await until(() => fade.view().done.length === 1);
+    const view = fade.view();
+    assert.equal(view.reviews.length, 0);
+    assert.equal(view.shippedToday, 1);
+    assert.equal(view.session.quiet, 1);
+    assert.equal(view.lastQuiet?.sha, view.done[0]?.sha);
+    assert.match(view.toast ?? '', /verified.*u undo/);
+    fade.undoDone('Version');
+    assert.equal(fade.view().lastQuiet, undefined);
+    assert.equal(fade.view().done.length, 0);
+    assert.match(fade.view().cards[0]?.body ?? '', new RegExp(`commit ${view.done[0]?.sha}`));
+    await until(() => fade.view().building === null);
+  } finally { fade.dispose(); }
+});
+
+test('proofs finish before the next build, including an explicit tick while checking', async () => {
+  const cwd = makeRepo('## [ready] First\nDone when: proof complete.\n\n## [ready] Second\n');
+  const builder = new FakeBuilder(cwd);
+  builder.build = async card => {
+    if (card.title === 'Second') {
+      assert.ok(existsSync(join(cwd, 'proof-complete.txt')));
+      return { kind: 'unfinished', summary: 'No fade_done was called.' };
+    }
+    writeFileSync(join(cwd, 'first.txt'), 'first');
+    return { kind: 'done', summary: 'First', howToTry: '', checks: [
+      { criterion: 'proof complete.', passed: true,
+        proof: `node -e "setTimeout(()=>require('fs').writeFileSync('proof-complete.txt','yes'),300)"` },
+    ] };
+  };
+  const fade = makeFade(cwd, builder);
+  try {
+    fade.start();
+    await until(() => fade.view().building?.action === 'checking…');
+    fade.tick();
+    assert.equal(fade.view().building?.title, 'First');
+    await until(() => fade.view().reviews.some(review => review.title === 'Second'));
+    assert.equal(fade.view().reviews.find(review => review.title === 'Second')?.verdict, 'unfinished');
+  } finally { fade.dispose(); }
+});
+
+test('quick read-back writes outcome and checks, keeps request, and never replaces agreed checks', async () => {
+  const cwd = makeRepo('## [ready] Quick\nAdd a version.\n\n## [ready] Agreed\nDone when: original.\n');
+  const builder = new FakeBuilder(cwd);
+  builder.build = async (_card, _context, emit) => {
+    emit({ type: 'understood', outcome: 'Show the version.', assumptions: ['CLI only.'], doneWhen: ['version visible.'] });
+    return { kind: 'unfinished', summary: 'Turn ended.' };
+  };
+  const fade = makeFade(cwd, builder);
+  try {
+    fade.start();
+    await until(() => fade.view().reviews.length === 2);
+    assert.match(fade.view().cards[0]?.body ?? '', /Show the version.[\s\S]*Done when: version visible.[\s\S]*Original request: Add a version/);
+    assert.equal(fade.view().cards[1]?.body, 'Done when: original.');
+    assert.equal(fade.view().reviews[0]?.verdict, 'unfinished');
+  } finally { fade.dispose(); }
+});
+
+test('stopping proof execution never triggers an automatic retry or starts the next card', async () => {
+  const cwd = makeRepo('## [ready] Slow proof\nDone when: it finishes.\n\n## [ready] Next\n');
+  const builder = new FakeBuilder(cwd);
+  let attempts = 0;
+  builder.build = async () => {
+    attempts++;
+    writeFileSync(join(cwd, 'result.txt'), 'work');
+    return { kind: 'done', summary: 'Ready', howToTry: '', checks: [
+      { criterion: 'it finishes.', passed: true, proof: 'node -e "setInterval(()=>{},1000)"' },
+    ] };
+  };
+  const fade = makeFade(cwd, builder);
+  try {
+    fade.start();
+    await until(() => fade.view().building?.action === 'checking…');
+    await fade.stopBuilder();
+    await until(() => fade.view().building === null);
+    assert.equal(attempts, 1);
+    assert.equal(fade.view().reviews[0]?.verdict, 'failed');
+    assert.equal(fade.view().cards[1]?.state, 'ready');
+    assert.match(fade.view().reviews[0]?.checks?.[0]?.ran?.tail ?? '', /Stopped/);
+  } finally { fade.dispose(); }
+});

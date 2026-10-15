@@ -4,10 +4,39 @@ import { visibleWidth } from '@earendil-works/pi-tui';
 import { createHarness, type Harness, type Scenario } from '../scripts/headless.js';
 import { dissolve } from '../src/ui/strip.js';
 import { wordmark } from '../src/ui/logo.js';
+import { ReviewOverlay } from '../src/ui/overlays.js';
+import type { Review } from '../src/types.js';
 
 const strip = (line: string): string =>
   line.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '').replace(/\x1b_[^\x07]*\x07/g, '');
 const text = (h: Harness): string => h.render().map(strip).join('\n');
+
+for (const [width, height] of [[120, 40], [80, 24]] as const) {
+  test(`honest review marks and failure output render at ${width}x${height}`, () => {
+    const review: Review = {
+      title: 'Honest checks', verdict: 'failed', summary: 'A mixed result.', howToTry: '',
+      files: [], finishedAt: 0, sha: 'abc123', doneWhen: ['proved', 'failed', 'claimed', 'taste', 'omitted'],
+      checks: [
+        { criterion: 'proved', passed: true, proof: 'test', ran: { code: 0, tail: '', ms: 1, sha: 'abc123' } },
+        { criterion: 'failed', passed: true, proof: 'test', ran: { code: 1, tail: 'actual failure output', ms: 1, sha: 'abc123' } },
+        { criterion: 'claimed', passed: true },
+        { criterion: 'taste', passed: true, look: 'Does it feel calmer?' },
+      ],
+    };
+    const noop = (): void => undefined;
+    const overlay = new ReviewOverlay(() => height, review, [], '', { accept: noop, revise: noop, undo: noop, close: noop });
+    let shown = '';
+    for (let i = 0; i < 30; i++) {
+      const lines = overlay.render(width);
+      lines.forEach(line => assert.ok(visibleWidth(line) <= width));
+      shown += lines.map(strip).join('\n');
+      overlay.handleInput('j');
+    }
+    for (const expected of ['✓ proved', '✗ failed', '· claimed', '👁 taste', '✗ omitted', 'not addressed', 'said, not run', 'actual failure output', 'Fade ran: exit 0 on abc123']) {
+      assert.ok(shown.includes(expected), expected);
+    }
+  });
+}
 
 function checkGeometry(h: Harness, width: number, height: number): void {
   const lines = h.render();
@@ -46,10 +75,23 @@ test('wide layout shows header, both panes, the strip and the hint line', () => 
     assert.ok(out.includes(label), `has ${label}`);
   }
   assert.match(out, /◎ A notes app I would actually use every day/);
-  assert.match(out, /◆ "Core notes app" landed · ✓ 1\/1 checks · 1 file/);
+  assert.match(out, /◆ "Core notes app" landed · said, not run · 1 file/);
   assert.match(out, /Read the project/);
   assert.match(out, /note to builder…/);
   h.dispose();
+});
+
+test('quiet acceptance leaves an undo key that queues the accepted checkpoint', () => {
+  const h = createHarness('review', 120, 40);
+  try {
+    const sha = h.fade.view().reviews[0]?.sha;
+    h.fade.accept('Core notes app', { quiet: true });
+    h.app.setFocus('builder');
+    assert.match(text(h), /verified.*u undo/);
+    h.app.handleInput('u');
+    assert.equal(h.fade.view().lastQuiet, undefined);
+    assert.match(h.fade.view().cards[0]?.body ?? '', new RegExp(`commit ${sha}`));
+  } finally { h.dispose(); }
 });
 
 test('idle Builder with nothing ready says so, in the pane and on the Next line', () => {

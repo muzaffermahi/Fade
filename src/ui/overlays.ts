@@ -1,6 +1,7 @@
 import {
   Editor, matchesKey, SelectList, type Component, type Focusable, type TUI,
 } from '@earendil-works/pi-tui';
+import { checkMark, matchChecks, reviewLabel } from '../verdict.js';
 import type { FileChange } from '../git.js';
 import type { Review } from '../types.js';
 import { box } from './box.js';
@@ -113,17 +114,21 @@ export class ReviewOverlay extends Overlay {
 
   /** "Done when" lines with the Builder's own verdict, or marked unchecked. */
   private checkLines(inner: number): string[] {
-    const checks = this.review.checks ?? [];
     const criteria = this.review.doneWhen ?? [];
-    if (checks.length === 0 && criteria.length === 0) return [];
+    if (criteria.length === 0) return [c.faint('no checks agreed'), ''];
     const lines = [c.muted('Done when')];
-    const rows = checks.length > 0 ? checks : criteria.map(criterion => ({ criterion, passed: false, evidence: undefined }));
-    for (const row of rows) {
-      const mark = checks.length === 0 ? c.faint('·') : row.passed ? c.mint('✓') : c.rose('✗');
-      const evidence = row.evidence ? c.faint(`  ${sanitize(row.evidence)}`) : checks.length === 0 ? c.faint('  not checked by the Builder') : '';
-      lines.push(...wrap(`${row.criterion}`, inner - 4).map((line, i) => (i === 0 ? ` ${mark} ${c.text(line)}${evidence}` : `   ${c.text(line)}`)));
+    for (const row of matchChecks(criteria, this.review.checks ?? [])) {
+      const mark = checkMark(row);
+      const paint = mark === '✓' ? c.mint : mark === '✗' ? c.rose : row.look ? c.lavender : c.faint;
+      const detail = row.ran ? `Fade ran: exit ${row.ran.code} on ${row.ran.sha ?? 'uncommitted work'}`
+        : row.look ? `your call: ${row.look}` : row.passed ? 'said, not run' : row.evidence ?? 'not addressed';
+      lines.push(...wrap(`${mark} ${row.criterion}`, inner).map(line => paint(line)));
+      lines.push(...wrap(detail, inner - 2).map(line => c.faint(`  ${line}`)));
+      if (row.evidence && row.ran) lines.push(...wrap(`Builder said: ${row.evidence}`, inner).map(line => c.faint(line)));
+      if (row.ran && row.ran.code !== 0) lines.push(...wrap(row.ran.tail, inner).map(line => c.rose(line)));
     }
-    return [...lines, ''];
+    lines.push(c.faint('Proofs cover only what their commands check; looks are yours.'), '');
+    return lines;
   }
 
   private fileLines(): string[] {
@@ -137,7 +142,7 @@ export class ReviewOverlay extends Overlay {
   private body(width: number): string[] {
     const inner = width - 4;
     const r = this.review;
-    const lines = [bold(c.text(sanitize(r.title))), ...wrap(r.summary, inner).map(l => c.text(l)), ''];
+    const lines = [c.lavender(reviewLabel(r)), bold(c.text(sanitize(r.title))), ...wrap(r.summary, inner).map(l => c.text(l)), ''];
     if (r.question) {
       lines.push(...wrap(`Question: ${r.question}`, inner).map(l => c.lavender(l)), '');
     }
@@ -155,6 +160,7 @@ export class ReviewOverlay extends Overlay {
   private footer(): string {
     const keys = this.review.question
       ? ['r answer', 'u undo', 'a accept anyway']
+      : this.review.verdict === 'look' ? ['a yes', 'r no, change…', 'u undo']
       : ['a accept', 'r revise', 'u undo', ...(this.actions.tryIt ? ['t try it'] : []), 'd diff'];
     return c.muted(`${keys.join(' · ')} · esc close`);
   }
