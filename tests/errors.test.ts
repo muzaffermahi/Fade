@@ -10,11 +10,15 @@ test('an expired OAuth login names the provider and says how to fix it', () => {
 
 test('an empty account, an unreachable server and rate limits each get a plain sentence', () => {
   assert.match(humanError('402 {"error":{"message":"Insufficient account funds"}}'), /out of credits/);
-  assert.match(humanError('connect ECONNREFUSED 127.0.0.1:1234'), /local model server is running/);
-  assert.match(humanError('429 Too Many Requests'), /rate-limiting/);
+  assert.match(humanError('connect ECONNREFUSED 127.0.0.1:1234'), /local model server.*try again/);
+  assert.match(humanError('429 Too Many Requests'), /busy.*continue/);
 });
 
 test('anything else is cut to its first sentence, never a stack trace', () => {
   assert.equal(humanError('Something odd happened. More detail; details=blah stack=Error at foo (x.ts:1:1)'), 'Something odd happened.');
   assert.ok(humanError('x'.repeat(500)).length <= 200);
+});
+
+test('missing Git gives an install and restart step', () => {
+  assert.match(humanError('spawnSync git ENOENT'), /Git is missing.*Install Git/);
 });

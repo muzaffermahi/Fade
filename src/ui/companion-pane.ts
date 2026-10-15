@@ -10,20 +10,20 @@ const INDENT = ' '.repeat(LABEL_WIDTH + 2);
 const RIGHT_MARGIN = 2;
 
 const markdownTheme: MarkdownTheme = {
-  heading: text => bold(c.mint(text)),
-  link: text => underline(c.lavender(text)),
-  linkUrl: text => c.faint(text),
-  code: text => c.lavender(text),
-  codeBlock: text => c.muted(text),
-  codeBlockBorder: text => c.faint(text),
-  quote: text => c.muted(text),
-  quoteBorder: text => c.faint(text),
-  hr: text => c.faint(text),
-  listBullet: text => c.mint(text),
-  bold: text => bold(text),
-  italic: text => `\x1b[3m${text}\x1b[23m`,
-  strikethrough: text => `\x1b[9m${text}\x1b[29m`,
-  underline: text => underline(text),
+  heading: (text) => bold(c.mint(text)),
+  link: (text) => underline(c.lavender(text)),
+  linkUrl: (text) => c.faint(text),
+  code: (text) => c.lavender(text),
+  codeBlock: (text) => c.muted(text),
+  codeBlockBorder: (text) => c.faint(text),
+  quote: (text) => c.muted(text),
+  quoteBorder: (text) => c.faint(text),
+  hr: (text) => c.faint(text),
+  listBullet: (text) => c.mint(text),
+  bold: (text) => bold(text),
+  italic: (text) => `\x1b[3m${text}\x1b[23m`,
+  strikethrough: (text) => `\x1b[9m${text}\x1b[29m`,
+  underline: (text) => underline(text),
 };
 
 /** Caches one Markdown component per transcript entry so finished replies aren't re-parsed every frame. */
@@ -46,23 +46,31 @@ export class CompanionRenderer {
     const body = Math.max(10, width - LABEL_WIDTH - 2 - RIGHT_MARGIN);
     if (entry.role === 'you' || entry.role === 'companion' || entry.role === 'landed') {
       const label = entry.role === 'you' ? c.lavender('you'.padEnd(LABEL_WIDTH)) : c.mint('fade'.padEnd(LABEL_WIDTH));
-      const lines = entry.role === 'you'
-        ? wrap(entry.text, body).map(line => c.text(line))
-        : this.markdown(key, entry.text).render(body);
+      const lines =
+        entry.role === 'landed'
+          ? wrap(entry.text, body).map((line) =>
+              c.text(line).replace('✓', c.mint('✓')).replace('· checked', c.faint('checked')),
+            )
+          : entry.role === 'you'
+            ? wrap(entry.text, body).map((line) => c.text(line))
+            : this.markdown(key, entry.text)
+                .render(body)
+                .filter((line) => line.trim());
       return lines.map((line, i) => ` ${i === 0 ? label : ' '.repeat(LABEL_WIDTH)} ${line}`);
     }
     if (entry.role === 'card' || entry.role === 'goal') return [];
     if (entry.role === 'parked') return [`${INDENT}${c.faint(`↷ parked for later: ${sanitize(entry.text)}`)}`];
     if (entry.role === 'tool') return [`${INDENT}${c.faint(sanitize(entry.text))}`];
-    return wrap(entry.text, body).map(line => `${INDENT}${c.rose(line)}`);
+    return wrap(entry.text, body).map((line) => `${INDENT}${c.rose(line)}`);
   }
 
   transcriptLines(view: FadeView, width: number): string[] {
     const lines: string[] = [];
     view.companion.forEach((entry, i) => {
       const spaced = entry.role === 'you' || entry.role === 'companion' || entry.role === 'landed';
-      if (spaced && lines.length > 0) lines.push('');
-      lines.push(...this.entryLines(entry, `${i}:${entry.text.length}:${entry.text.slice(0, 40)}`, width, view));
+      const entryLines = this.entryLines(entry, `${i}:${entry.text.length}:${entry.text.slice(0, 40)}`, width, view);
+      if (entryLines.length && spaced && lines.length > 0) lines.push('');
+      lines.push(...entryLines);
     });
     if (view.companionLive) {
       if (lines.length > 0) lines.push('');
@@ -72,9 +80,17 @@ export class CompanionRenderer {
   }
 
   render(view: FadeView, o: PaneOptions): string[] {
-    const content = view.companion.length === 0 && !view.companionLive
-      ? ['', ` ${c.text('What are we making?')}`, ` ${c.muted('Tell Fade what you want. I will ask if I need more.')}`]
-      : this.transcriptLines(view, o.width);
+    const content = this.transcriptLines(view, o.width);
+    if (!view.companion.some((entry) => entry.role === 'you') && !view.companionLive) {
+      content.push(
+        '',
+        ` ${c.text('What are we making?')}`,
+        '',
+        ...['add a --version flag', 'why is the login slow?', 'make the settings page calmer'].map(
+          (text) => ` ${c.faint(text)}`,
+        ),
+      );
+    }
     const shown = viewport(content, o.height, o.scroll);
     return withNewHint(shown.lines, shown.behind, o.width);
   }

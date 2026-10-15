@@ -2,8 +2,12 @@ import { existsSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  createCodemodeExtension, createMcpExtension, createToolSearchExtension,
-  DefaultResourceLoader, getAgentDir, ModelRuntime,
+  createCodemodeExtension,
+  createMcpExtension,
+  createToolSearchExtension,
+  DefaultResourceLoader,
+  getAgentDir,
+  ModelRuntime,
 } from '@earendil-works/pi-coding-agent';
 
 export const WEB_TOOLS = ['web_search', 'fetch_content', 'get_search_content', 'web_enable'];
@@ -35,10 +39,14 @@ export async function loader(cwd: string, rolePrompt: string, builder = false): 
   const resourceLoader = new DefaultResourceLoader({
     cwd,
     agentDir: getAgentDir(),
-    additionalExtensionPaths: [join(dirname(fileURLToPath(import.meta.resolve('pi-web-access/package.json'))), 'dist', 'index.js')],
+    noExtensions: true,
+    additionalExtensionPaths: [
+      join(dirname(fileURLToPath(import.meta.resolve('pi-web-access/package.json'))), 'dist', 'index.js'),
+    ],
     extensionFactories: builder
-      ? [createCodemodeExtension({ models: false }), createToolSearchExtension(), createMcpExtension()] : [],
-    appendSystemPromptOverride: base => [...base, rolePrompt],
+      ? [createCodemodeExtension({ models: false }), createToolSearchExtension(), createMcpExtension()]
+      : [],
+    appendSystemPromptOverride: (base) => [...base, rolePrompt],
   });
   await resourceLoader.reload();
   return resourceLoader;
@@ -90,7 +98,11 @@ export function errorMessage(error: unknown): string {
   return humanError(error instanceof Error ? error.message : String(error));
 }
 
-const AUTH_TROUBLE = /oauth refresh failed|invalid_grant|refresh token|unauthori[sz]ed|invalid api key|invalid x-api-key|authentication|\b401\b|no api key/i;
+const AUTH_TROUBLE = new RegExp(
+  'oauth refresh failed|invalid_grant|refresh token|unauthori[sz]ed|invalid api key|' +
+    'invalid x-api-key|authentication|\\b401\\b|no api key',
+  'i',
+);
 
 /**
  * Provider errors arrive as long technical dumps (URLs, JSON bodies, stack traces).
@@ -98,6 +110,9 @@ const AUTH_TROUBLE = /oauth refresh failed|invalid_grant|refresh token|unauthori
  */
 export function humanError(raw: string): string {
   const text = raw.replace(/\s+/g, ' ').trim();
+  if (/git.*ENOENT|git.*not recognized|git.*not found/i.test(text)) {
+    return 'Git is missing. Install Git, reopen your terminal, then run fade again.';
+  }
   if (AUTH_TROUBLE.test(text)) {
     const provider = /for ([a-z0-9-]+)[:.]/i.exec(text)?.[1] ?? /provider[ "']+([a-z0-9-]+)/i.exec(text)?.[1];
     const who = provider ? `Your ${provider} login` : 'The model login';
@@ -107,10 +122,10 @@ export function humanError(raw: string): string {
     return 'That provider account is out of credits. Top it up, or switch models with /model.';
   }
   if (/econnrefused|fetch failed|enotfound|network/i.test(text)) {
-    return 'Could not reach the model provider. Check your connection (or that your local model server is running).';
+    return 'Could not reach the provider. Check your connection or local model server, then try again.';
   }
   if (/rate.?limit|\b429\b|overloaded|\b529\b/i.test(text)) {
-    return 'The model provider is rate-limiting or overloaded right now. Wait a moment, then ready the step again.';
+    return 'The model provider is busy. Wait a moment, then say "continue".';
   }
   const first = text.split(/(?<=[.!?])\s|; details=| stack=| at [\w.<>]+ \(/)[0] ?? text;
   return first.length > 200 ? `${first.slice(0, 199)}…` : first;
@@ -121,5 +136,6 @@ export function lastRunError(messages: readonly unknown[]): string | undefined {
   const last = messages[messages.length - 1];
   if (!isRecord(last) || last.role !== 'assistant' || last.stopReason !== 'error') return undefined;
   return typeof last.errorMessage === 'string' && last.errorMessage
-    ? humanError(last.errorMessage) : 'the model request failed';
+    ? humanError(last.errorMessage)
+    : 'the model request failed';
 }

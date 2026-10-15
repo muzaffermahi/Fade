@@ -1,25 +1,30 @@
-# Launch drafts (you publish)
-
-## r/LocalLLaMA
-**Title:** I got my flow back with coding agents: local model as the thinking partner, any model as the builder
-
-Waiting on agents wrecks my focus, so I built Fade. One Builder builds the current step; a Companion (can be a local
-model, it only reads and talks) helps me shape the next one. The screen shows one NEXT thing, a runway meter says how
-long I can think before the Builder starves, and nothing moves while I'm typing. Works with any Pi-supported model.
-Honest limits: Builders need strong tool calling; small local models are better as the Companion. [GIF] [link]
-
-## X thread
-1. "Claude is the one flowing, not me." Everyone using coding agents feels this. I built Fade to fix it. [GIF]
-2. One thread, one next thing. The Builder drives; you navigate.
-3. The runway meter: how long you can think before the machine runs out of work.
-4. It never interrupts mid-thought. Things land at your breakpoints.
-5. Your session recap is a card you can screenshot. [recap] npx @muzaffermahi/fade --demo
+# Launch drafts — owner publishes
 
 ## Show HN
-**Show HN: Fade, navigate while your coding agent drives**
-Plan the next step while the current one builds. One goal, one NEXT line, a runway meter, feedback-first review.
-Any model, local included. `npx @muzaffermahi/fade --demo` needs no key.
 
-## Essay outline: "Claude is the one flowing, not me"
-Prompt-wait-evaluate kills flow; attention residue; interruptions cost less at breakpoints; reviewing a diff you
-didn't specify; the navigator role; one thread; Fade as the proof.
+**Show HN: Fade — “checked” means the coding agent actually ran it**
+
+Fade saves each change in Git, independently re-runs its checks, and lands verified work quietly.
+There is one conversation: keep talking while it builds. It asks about taste, not test output.
+Say yes, undo that, show me, or stop. No modes to learn. Try the demo with no key:
+`npx @muzaffermahi/fade --demo`. [GIF] [project link]
+
+## r/LocalLLaMA
+
+**Title: My coding-agent UI reruns the checks itself and lets me keep talking while it builds**
+
+I built Fade because I kept losing my train of thought while an agent worked. One conversation
+stays open while work runs beside it. “Checked” means Fade ran the check against the saved commit;
+a model saying “tests pass” isn't enough. Verified work lands quietly, taste questions wait for me.
+Bring Pi-compatible models, including local ones with reliable tool calling. A stronger voice plus
+a cheaper Builder worked better in my tests than a Flash-class voice. Demo needs no key. [GIF] [link]
+
+## X thread
+
+1. “Checked” should mean the agent actually ran it. Fade saves the change, reruns its checks, and shows the result.
+2. One conversation. Keep talking while it builds; it only asks you about taste.
+3. Say “yes”, “undo that”, “show me”, “stop”. Enter sends. No modes or action hotkeys.
+4. Bring your own models. Web search, Python checks, native MCP and codemode are available. [GIF]
+5. Try it without a key: `npx @muzaffermahi/fade --demo`. [project link]
+
+These are drafts. Package publication and posting require separate owner approval.

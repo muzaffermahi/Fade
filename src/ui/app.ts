@@ -1,6 +1,11 @@
 import {
-  CombinedAutocompleteProvider, Editor, matchesKey,
-  type Component, type Focusable, type OverlayHandle, type TUI,
+  CombinedAutocompleteProvider,
+  Editor,
+  matchesKey,
+  type Component,
+  type Focusable,
+  type OverlayHandle,
+  type TUI,
 } from '@earendil-works/pi-tui';
 import type { Git } from '../git.js';
 import type { Fade } from '../loop.js';
@@ -25,12 +30,15 @@ export class FadeApp implements Component, Focusable, CommandHost {
   private lastActivityAt = Date.now();
 
   constructor(
-    readonly tui: TUI, readonly fade: Fade, private readonly git: Git,
-    readonly meta: UiMeta, readonly quit: () => void,
+    readonly tui: TUI,
+    readonly fade: Fade,
+    private readonly git: Git,
+    readonly meta: UiMeta,
+    readonly quit: () => void,
   ) {
     this.editor = new Editor(tui, editorTheme(), { paddingX: 1 });
     this.editor.focused = true;
-    this.editor.onSubmit = text => {
+    this.editor.onSubmit = (text) => {
       if (!text.trim()) return;
       this.editor.setText('');
       this.state.scroll = 0;
@@ -38,7 +46,7 @@ export class FadeApp implements Component, Focusable, CommandHost {
       else this.fade.sendToCompanion(text);
       this.requestRender();
     };
-    this.previousReviews = new Set(fade.view().reviews.map(r => r.title));
+    this.previousReviews = new Set(fade.view().reviews.map((r) => r.title));
     this.ticker = setInterval(() => {
       if (fade.animating) {
         this.lastActivityAt = Date.now();
@@ -61,14 +69,20 @@ export class FadeApp implements Component, Focusable, CommandHost {
     if (this.toastTimer) clearTimeout(this.toastTimer);
   }
   invalidate(): void {}
-  requestRender(force = false): void { this.tui.requestRender(force); }
+  requestRender(force = false): void {
+    this.tui.requestRender(force);
+  }
   render(width: number): string[] {
     this.state.now = Date.now();
     const view = this.fade.view(this.state.now);
-    const reviews = new Set(view.reviews.map(r => r.title));
-    if ([...reviews].some(title => !this.previousReviews.has(title))) this.tui.terminal.write('\x07');
+    const reviews = new Set(view.reviews.map((r) => r.title));
+    if ([...reviews].some((title) => !this.previousReviews.has(title))) this.tui.terminal.write('\x07');
     this.previousReviews = reviews;
-    const title = view.reviews.length ? 'Fade · ◆ needs you' : view.building ? `Fade · ${sanitize(view.building.title)}` : 'Fade';
+    const title = view.reviews.length
+      ? 'Fade · ◆ needs you'
+      : view.building
+        ? `Fade · ${sanitize(view.building.title)}`
+        : 'Fade';
     if (title !== this.title) {
       this.title = title;
       this.tui.terminal.setTitle(title);
@@ -78,8 +92,12 @@ export class FadeApp implements Component, Focusable, CommandHost {
       setImmediate(() => this.openShow(view.showTitle));
     }
     return renderScreen(
-      view, this.state, { editor: this.editor, companion: this.renderer },
-      this.meta, width, this.tui.terminal.rows - 1,
+      view,
+      this.state,
+      { editor: this.editor, companion: this.renderer },
+      this.meta,
+      width,
+      this.tui.terminal.rows - 1,
     );
   }
   handleInput(data: string): void {
@@ -133,20 +151,37 @@ export class FadeApp implements Component, Focusable, CommandHost {
     this.requestRender();
   }
   rows = (): number => this.tui.terminal.rows;
-  openHelp(): void { this.show(new HelpOverlay(this.rows, () => this.close())); }
+  openHelp(): void {
+    this.show(new HelpOverlay(this.rows, () => this.close()));
+  }
   openShow(title?: string): void {
     const view = this.fade.view();
-    const review = title ? view.reviews.find(r => r.title === title) : view.reviews[0];
-    const done = title ? view.done.findLast(d => d.title === title) : view.done.at(-1);
-    const archived = view.landedReviews.findLast(r => r.title === done?.title);
-    const record = review ?? archived ?? (done ? {
-      title: done.title, verdict: 'none' as const, summary: 'Accepted work.',
-      howToTry: '', files: [], finishedAt: 0, ...(done.sha ? { sha: done.sha } : {}),
-    } : undefined);
+    const review = title ? view.reviews.find((r) => r.title === title) : view.reviews[0];
+    const done = title ? view.done.findLast((d) => d.title === title) : view.done.at(-1);
+    const archived = view.landedReviews.findLast((r) => r.title === done?.title);
+    const record =
+      review ??
+      archived ??
+      (done
+        ? {
+            title: done.title,
+            verdict: 'none' as const,
+            summary: 'Accepted work.',
+            howToTry: '',
+            files: [],
+            finishedAt: 0,
+            ...(done.sha ? { sha: done.sha } : {}),
+          }
+        : undefined);
     if (!record) return this.toast('Nothing built to show yet.');
-    this.show(new ShowOverlay(
-      this.rows, record, record.sha ? this.git.numstat(record.sha) : [],
-      record.sha ? this.git.show(record.sha) : '', () => this.close(),
-    ));
+    this.show(
+      new ShowOverlay(
+        this.rows,
+        record,
+        record.sha ? this.git.numstat(record.sha) : [],
+        record.sha ? this.git.show(record.sha) : '',
+        () => this.close(),
+      ),
+    );
   }
 }

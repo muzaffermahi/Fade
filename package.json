@@ -1,6 +1,6 @@
 {
   "name": "@muzaffermahi/fade",
-  "version": "0.2.0",
+  "version": "0.5.0",
   "description": "Get your flow back. You navigate, AI drives.",
   "type": "module",
   "bin": {
@@ -15,8 +15,7 @@
     "demo": "tsx src/cli.ts --demo",
     "test": "node --import tsx --test tests/*.test.ts",
     "check": "tsc --noEmit -p tsconfig.test.json",
-    "snapshot": "tsx scripts/snapshot.ts",
-    "perf": "tsx scripts/perf.ts"
+    "snapshot": "tsx scripts/snapshot.ts"
   },
   "dependencies": {
     "@earendil-works/chord": "1.0.4",
@@ -38,7 +37,11 @@
     "dist",
     "README.md",
     "LICENSE",
-    "THIRD_PARTY_NOTICES.md"
+    "THIRD_PARTY_NOTICES.md",
+    "docs/assets/demo.gif",
+    "docs/final-pass-results.md",
+    "docs/hallway-test.md",
+    "docs/changelog.md"
   ],
   "license": "MIT"
 }

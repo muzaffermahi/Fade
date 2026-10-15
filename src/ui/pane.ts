@@ -18,7 +18,7 @@ export function editorBlock(editor: Editor, width: number, focused: boolean, pla
     const cursor = focused ? `${CURSOR_MARKER}\x1b[7m \x1b[0m` : ' ';
     lines[1] = ` ${cursor}${c.faint(placeholder)}`;
   } else if (!focused) {
-    return lines.map(line => line.replace(CURSOR_MARKER, '').replace('\x1b[7m \x1b[0m', ' '));
+    return lines.map((line) => line.replace(CURSOR_MARKER, '').replace('\x1b[7m \x1b[0m', ' '));
   }
   return lines;
 }
@@ -31,7 +31,8 @@ export interface Viewport {
 
 /** Shows `height` lines of `content`, ending `scroll` lines above the bottom. Pads with blanks. */
 export function viewport(content: string[], height: number, scroll: number): Viewport {
-  if (content.length <= height) return { lines: [...content, ...Array(height - content.length).fill('')], behind: false };
+  if (content.length <= height)
+    return { lines: [...content, ...Array(height - content.length).fill('')], behind: false };
   const maxScroll = content.length - height;
   const offset = Math.min(Math.max(0, scroll), maxScroll);
   const end = content.length - offset;

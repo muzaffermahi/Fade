@@ -34,7 +34,7 @@ export class Git {
       const gitDir = this.run(['rev-parse', '--git-path', 'info/exclude']).trim();
       const file = join(this.cwd, gitDir);
       const current = existsSync(file) ? readFileSync(file, 'utf8') : '';
-      if (current.split('\n').some(line => line.trim() === '.fade/')) return;
+      if (current.split('\n').some((line) => line.trim() === '.fade/')) return;
       mkdirSync(join(file, '..'), { recursive: true });
       appendFileSync(file, `${current.endsWith('\n') || current === '' ? '' : '\n'}.fade/\n`);
     } catch {
@@ -44,9 +44,9 @@ export class Git {
 
   branch(): string {
     try {
-      return this.run(['rev-parse', '--abbrev-ref', 'HEAD']).trim();
+      return this.run(['symbolic-ref', '--short', 'HEAD']).trim();
     } catch {
-      return '';
+      return 'the current branch';
     }
   }
 
@@ -67,7 +67,8 @@ export class Git {
       return { sha, files };
     } catch (error) {
       const stderr = error instanceof Error && 'stderr' in error ? String(error.stderr) : '';
-      const first = stderr.split('\n').find(line => line.trim()) ?? (error instanceof Error ? error.message : 'commit failed');
+      const first =
+        stderr.split('\n').find((line) => line.trim()) ?? (error instanceof Error ? error.message : 'commit failed');
       return { error: first.trim() };
     }
   }
@@ -75,10 +76,13 @@ export class Git {
   /** Lines added and removed per file in a commit. Binary files report 0/0. */
   numstat(sha: string): FileChange[] {
     try {
-      return this.run(['show', '--numstat', '--format=', sha]).split('\n').filter(Boolean).map(line => {
-        const [added = '0', removed = '0', ...path] = line.split('\t');
-        return { file: path.join('\t'), added: Number(added) || 0, removed: Number(removed) || 0 };
-      });
+      return this.run(['show', '--numstat', '--format=', sha])
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => {
+          const [added = '0', removed = '0', ...path] = line.split('\t');
+          return { file: path.join('\t'), added: Number(added) || 0, removed: Number(removed) || 0 };
+        });
     } catch {
       return [];
     }

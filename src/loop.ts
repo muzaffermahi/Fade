@@ -3,39 +3,31 @@ import type { Card, DoneEntry, SlashHost } from './types.js';
 
 export type { FadeOptions } from './engine.js';
 
-/** Everything you can do: ready steps, review what landed, keep the thread, talk to Fade. */
 export class Fade extends Engine {
-
-  toggleReady(title: string): void {
-    const card = this.model.find(title);
-    if (!card) return;
-    if (card.state === 'draft') {
-      card.state = 'ready';
-      this.builderError = undefined;
-      this.model.save();
-      this.tick();
-    } else if (card.state === 'ready') {
-      card.state = 'draft';
-      this.model.save();
-    }
-    this.notify();
-  }
-
   move(title: string, toTop: boolean): void {
     const card = this.model.find(title);
     if (!card || card.state === 'building') return;
     this.model.remove(title);
     if (toTop) this.model.cards.unshift(card);
     else this.model.cards.push(card);
+    this.chat.reply(`${title} ${toTop ? 'goes next' : 'will follow the other work'}.`);
     this.persist();
   }
 
   ready(title: string): void {
-    if (this.model.find(title)?.state === 'draft') this.toggleReady(title);
+    const card = this.model.find(title);
+    if (!card || !['draft', 'review'].includes(card.state)) return;
+    this.removeReview(title);
+    this.chat.reply(`On it: ${title}.`);
+    card.state = 'ready';
+    this.builderError = undefined;
+    this.persist();
+    this.tick();
   }
 
   queue(title: string, body: string): string {
     const unique = this.model.add(title, body, 'ready');
+    this.chat.reply(`On it: ${unique}.`);
     this.builderError = undefined;
     this.model.save();
     this.tick();
@@ -45,29 +37,19 @@ export class Fade extends Engine {
 
   show(title: string): void {
     this.showTitle = title;
+    this.chat.reply(`Here’s ${title}.`);
     this.notify();
   }
 
-  clearShow(): void { this.showTitle = undefined; }
-
-
-  drop(title: string): void {
-    const card = this.model.find(title);
-    if (!card || card.state === 'building') return;
-    this.model.remove(title);
-    this.removeReview(title);
-    this.persist();
+  clearShow(): void {
+    this.showTitle = undefined;
   }
 
-  addCard(title: string, body: string): string {
+  proposeCard(title: string, body: string): string {
     const unique = this.model.add(title, body);
     this.persist();
+    this.chat.reply(`${unique}. Want it?`);
     return unique;
-  }
-
-  /** A card the Companion proposed: it becomes the "ready it?" suggestion. */
-  proposeCard(title: string, body: string): string {
-    return this.addCard(title, body);
   }
 
   editCard(title: string, patch: { title?: string; body?: string }): void {
@@ -77,20 +59,22 @@ export class Fade extends Engine {
     const newTitle = patch.title?.trim();
     if (newTitle && newTitle !== card.title) {
       const unique = this.model.unique(newTitle, card);
-      const review = this.state.data.reviews.find(r => r.title === card.title);
+      const review = this.state.data.reviews.find((r) => r.title === card.title);
       if (review) review.title = unique;
       if (this.building?.title === card.title) this.building.title = unique;
       card.title = unique;
     }
+    this.chat.reply(`Updated: ${card.title}.`);
     this.persist();
   }
 
   list(): Card[] {
-    return this.model.cards.map(card => ({ ...card }));
+    return this.model.cards.map((card) => ({ ...card }));
   }
 
   park(text: string): void {
     this.model.park(text);
+    this.chat.reply(`Saved for later: ${text}.`);
     this.persist();
   }
 
@@ -107,25 +91,24 @@ export class Fade extends Engine {
     if (review) this.state.data.landedReviews = [...this.state.data.landedReviews, review].slice(-50);
     const entry: DoneEntry = review?.sha ? { title, sha: review.sha } : { title };
     this.model.plan.done.push(entry);
-    this.state.rollDate();
-    this.state.data.shipped.count += 1;
-    this.session.shipped.push(title);
     this.persist();
-    if (quiet) {
-      this.lastQuiet = entry;
-      this.session.quiet = (this.session.quiet ?? 0) + 1;
-    }
-    this.toaster.show(`✓ ${title} is done`);
+    if (!quiet) this.chat.reply(`✓ ${title} — done.`);
   }
 
   async revise(title: string, body: string, startOver = false): Promise<void> {
     let card = this.model.find(title);
     if (!card) {
-      const done = this.model.plan.done.findLast(d => d.title === title);
+      const done = this.model.plan.done.findLast((d) => d.title === title);
       if (!done) return;
-      this.model.plan.done = this.model.plan.done.filter(d => d !== done);
-      this.model.add(title, body + (startOver && done.sha ? `\n\nStart from: revert ${done.sha} first` : ''), 'ready', true);
+      this.model.plan.done = this.model.plan.done.filter((d) => d !== done);
+      this.model.add(
+        title,
+        body + (startOver && done.sha ? `\n\nStart from: revert ${done.sha} first` : ''),
+        'ready',
+        true,
+      );
       this.model.save();
+      this.chat.reply(`On it: ${title}.`);
       this.tick();
       this.persist();
       return;
@@ -133,7 +116,6 @@ export class Fade extends Engine {
     const wasBuilding = card.state === 'building';
     if (wasBuilding) {
       await this.stopBuilder();
-      while (this.building?.title === title && !this.disposed) await new Promise(resolve => setTimeout(resolve, 10));
       if (this.disposed) return;
       card = this.model.find(title);
       if (!card) return;
@@ -144,6 +126,7 @@ export class Fade extends Engine {
     card.state = 'ready';
     this.model.moveToTop(card);
     this.model.save();
+    this.chat.reply(`On it: ${title}.`);
     this.tick();
     this.persist();
   }
@@ -160,16 +143,18 @@ export class Fade extends Engine {
 
   /** Queue an intelligent revert for an accepted checkpoint. */
   undoDone(title: string): void {
-    const index = this.model.plan.done.findLastIndex(entry => entry.title === title);
+    const index = this.model.plan.done.findLastIndex((entry) => entry.title === title);
     const entry = this.model.plan.done[index];
     if (!entry?.sha) return;
     this.model.plan.done.splice(index, 1);
-    if (this.lastQuiet?.title === title) this.lastQuiet = undefined;
     this.queueUndo(title, entry.sha);
   }
 
   private queueUndo(title: string, sha: string): void {
-    const body = `Revert the changes from commit ${sha} ("fade: ${title}") while keeping later work intact.\n` +
+    this.chat.reply(`↩ Undoing ${title}…`);
+    const body =
+      `Revert the changes from commit ${sha} ("fade: ${title}") while keeping later work intact.\n` +
+      'Include directly preceding partial checkpoints for this same request, preserving unrelated work.\n' +
       'Done when: that change is gone and the project still builds and passes its tests.';
     this.model.add(`Undo: ${title}`, body, 'ready', true);
     this.model.save();
@@ -179,30 +164,35 @@ export class Fade extends Engine {
 
   noteBuilder(text: string): void {
     const clean = text.trim();
-    if (!clean || !this.building) return;
-    this.building.notes.push(clean);
+    if (!clean) return;
+    if (!this.building) throw new Error('Nothing is running. Use "continue" to resume paused work.');
+    this.chat.reply(`I’ve passed that along for ${this.building.title}.`);
     void this.builder.note(clean).catch(() => undefined);
     this.notify();
   }
 
   async stopBuilder(): Promise<void> {
     if (!this.building) return;
-    this.toaster.show('Stopping…');
     this.proofAbort?.abort();
     await this.builder.stop();
+    while (this.building && !this.disposed) await new Promise((resolve) => setTimeout(resolve, 10));
   }
 
   sendToCompanion(text: string): void {
     const clean = text.trim();
     if (!clean) return;
     const word = clean.toLowerCase();
-    const drafts = this.model.cards.filter(c => c.state === 'draft');
-    const questions = this.state.data.reviews.filter(r => r.verdict === 'look' || r.question);
-    const confirm = ['yes', 'y', 'go', 'ok'].includes(word);
-    const accepted = this.state.data.landedReviews.filter(review =>
-      this.model.plan.done.some(done => done.title === review.title && done.sha === review.sha));
-    const latest = [...this.state.data.reviews, ...accepted]
-      .sort((a, b) => a.finishedAt - b.finishedAt).at(-1) ?? this.model.plan.done.at(-1);
+    const drafts = this.model.cards.filter((c) => c.state === 'draft');
+    const questions = this.state.data.reviews.filter((r) => r.verdict === 'look' || r.question || word === 'continue');
+    const confirm =
+      ['yes', 'y', 'go', 'ok'].includes(word) ||
+      (word === 'continue' && !this.building && questions.every((r) => !r.question && r.verdict !== 'look'));
+    const accepted = this.state.data.landedReviews.filter((review) =>
+      this.model.plan.done.some((done) => done.title === review.title && done.sha === review.sha),
+    );
+    const latest =
+      [...this.state.data.reviews, ...accepted].sort((a, b) => a.finishedAt - b.finishedAt).at(-1) ??
+      this.model.plan.done.at(-1);
     if (word === 'stop' && this.building) {
       this.state.data.companion.push({ role: 'you', text: clean });
       void this.stopBuilder();
@@ -214,7 +204,9 @@ export class Fade extends Engine {
       const question = questions[0];
       this.state.data.companion.push({ role: 'you', text: clean });
       if (draft) this.ready(draft.title);
-      else if (question?.question) void this.revise(question.title, `${this.model.find(question.title)?.body ?? ''}\n\nAnswer: yes`);
+      else if (question?.question)
+        void this.revise(question.title, `${this.model.find(question.title)?.body ?? ''}\n\nAnswer: yes`);
+      else if (question && word === 'continue') this.ready(question.title);
       else if (question) this.accept(question.title);
     } else return this.chat.send(clean);
     this.saveState();

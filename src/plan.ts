@@ -4,10 +4,9 @@ import type { Card, CardState, DoneEntry, Plan } from './types.js';
 
 const STATES: readonly string[] = ['draft', 'ready', 'building', 'review'];
 const DEFAULT_PREAMBLE = '# Plan\n';
-const GOAL_LINE = /^goal:[ \t]*(.*)$/im;
 
 export function emptyPlan(): Plan {
-  return { preamble: DEFAULT_PREAMBLE, goal: '', cards: [], later: [], done: [] };
+  return { preamble: DEFAULT_PREAMBLE, cards: [], later: [], done: [] };
 }
 
 function listItem(line: string): string | undefined {
@@ -21,14 +20,6 @@ function parseDoneLine(line: string): DoneEntry | undefined {
   const withSha = /^(.*?)\s*\(([0-9a-f]{4,40})\)$/.exec(item);
   if (withSha && withSha[1]) return { title: withSha[1], sha: withSha[2] as string };
   return { title: item };
-}
-
-/** Pulls the "Goal: …" line out of the preamble so it can be edited on its own. */
-function splitGoal(preamble: string): { preamble: string; goal: string } {
-  const match = GOAL_LINE.exec(preamble);
-  if (!match) return { preamble, goal: '' };
-  const rest = preamble.replace(GOAL_LINE, '').replace(/\n{3,}/g, '\n\n').trimEnd();
-  return { preamble: rest ? `${rest}\n` : DEFAULT_PREAMBLE, goal: (match[1] ?? '').trim() };
 }
 
 function uniqueTitle(title: string, taken: Set<string>): string {
@@ -50,8 +41,7 @@ export function parsePlan(text: string): Plan {
   const first = parts[0] ?? '';
   const hasPreamble = !first.startsWith('## ');
   const rawPreamble = hasPreamble && first.trim() ? first.trimEnd() + '\n' : DEFAULT_PREAMBLE;
-  const { preamble, goal } = splitGoal(rawPreamble);
-  const plan: Plan = { preamble, goal, cards: [], later: [], done: [] };
+  const plan: Plan = { preamble: rawPreamble, cards: [], later: [], done: [] };
   const taken = new Set<string>();
   for (const section of hasPreamble ? parts.slice(1) : parts) {
     const newline = section.indexOf('\n');
@@ -87,7 +77,6 @@ export function parsePlan(text: string): Plan {
 
 export function serializePlan(plan: Plan): string {
   let out = plan.preamble.trimEnd() + '\n';
-  if (plan.goal.trim()) out += `Goal: ${plan.goal.trim()}\n`;
   out += '\n';
   for (const card of plan.cards) {
     out += `## [${card.state}] ${card.title}\n`;
@@ -117,7 +106,7 @@ export function doneWhenLines(body: string): string[] {
 }
 
 export function makeUniqueTitle(cards: readonly Card[], title: string): string {
-  return uniqueTitle(title, new Set(cards.map(card => card.title)));
+  return uniqueTitle(title, new Set(cards.map((card) => card.title)));
 }
 
 export class PlanStore {

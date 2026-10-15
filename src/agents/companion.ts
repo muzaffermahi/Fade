@@ -1,23 +1,39 @@
 import { join } from 'node:path';
 import {
-  createAgentSession, defineTool, SessionManager, type AgentSession, type ModelRuntime,
+  createAgentSession,
+  defineTool,
+  SessionManager,
+  type AgentSession,
+  type ModelRuntime,
 } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
-import { doneWhenLines, serializePlan } from '../plan.js';
+import { doneWhenLines } from '../plan.js';
 import type { CompanionAgent, SlashHost, CompanionEvent, PlanApi } from '../types.js';
 import { COMPANION_PROMPT } from './prompts.js';
-import {
-  assistantText, describeTool, errorMessage, lastRunError, loader, resolveModel, textDelta,
-} from './pi.js';
+import { assistantText, describeTool, errorMessage, lastRunError, loader, resolveModel, textDelta } from './pi.js';
 import { WEB_TOOLS } from './pi.js';
 import { PiSlash } from './slash.js';
 
 // Read-only built-ins plus the Fade card tools. No edit, write or bash.
 export const COMPANION_TOOLS = [
-  'read', 'grep', 'find', 'ls', ...WEB_TOOLS,
-  'fade_queue', 'fade_ready', 'fade_note_builder', 'fade_stop_builder', 'fade_accept',
-  'fade_revise', 'fade_undo', 'fade_show', 'fade_move',
-  'fade_add_card', 'fade_edit_card', 'fade_read_plan', 'fade_park', 'fade_promote_later',
+  'read',
+  'grep',
+  'find',
+  'ls',
+  ...WEB_TOOLS,
+  'fade_queue',
+  'fade_ready',
+  'fade_note_builder',
+  'fade_stop_builder',
+  'fade_accept',
+  'fade_revise',
+  'fade_undo',
+  'fade_show',
+  'fade_move',
+  'fade_add_card',
+  'fade_edit_card',
+  'fade_park',
+  'fade_promote_later',
 ];
 
 export interface PiCompanionOptions {
@@ -59,11 +75,10 @@ export class PiCompanion implements CompanionAgent {
     try {
       await this.open(false);
     } catch (error) {
-      throw new Error(`Companion couldn't start: ${errorMessage(error)}`);
+      throw new Error(`Fade couldn't start: ${errorMessage(error)}`);
     }
   }
 
-  /** Opens the most recent session, or a brand-new one when `fresh` is set (for /new). */
   private async open(fresh: boolean): Promise<void> {
     const model = this.session?.model ?? resolveModel(this.opts.runtime, this.opts.model);
     const dir = this.sessionDir;
@@ -75,12 +90,14 @@ export class PiCompanion implements CompanionAgent {
       excludeTools: ['mcp__*', 'codemode', 'tool_search'],
       customTools: this.customTools(),
       resourceLoader: await loader(this.opts.cwd, COMPANION_PROMPT),
-      sessionManager: fresh ? SessionManager.create(this.opts.cwd, dir) : SessionManager.continueRecent(this.opts.cwd, dir),
+      sessionManager: fresh
+        ? SessionManager.create(this.opts.cwd, dir)
+        : SessionManager.continueRecent(this.opts.cwd, dir),
     });
     await session.bindExtensions({});
     this.unsubscribe?.();
     this.session?.dispose();
-    this.unsubscribe = session.subscribe(event => this.onSessionEvent(event));
+    this.unsubscribe = session.subscribe((event) => this.onSessionEvent(event));
     this.session = session;
   }
 
@@ -89,11 +106,11 @@ export class PiCompanion implements CompanionAgent {
     const addTool = defineTool({
       name: 'fade_add_card',
       label: 'Add card',
-      description: 'Add a draft card to the plan. Title: at most 5 words. Body: 1-4 sentences ending in "Done when: ...".',
+      description:
+        'Add a draft card to the plan. Title: at most 5 words. Body: 1-4 sentences ending in "Done when: ...".',
       parameters: Type.Object({ title: Type.String(), body: Type.String() }),
       execute: async (_id, params) => {
         const title = plan.addCard(params.title, params.body);
-        this.emit({ type: 'card', title, action: 'added' });
         return { content: [{ type: 'text', text: `Added draft card "${title}".` }], details: undefined };
       },
     });
@@ -107,28 +124,18 @@ export class PiCompanion implements CompanionAgent {
         body: Type.Optional(Type.String()),
       }),
       execute: async (_id, params) => {
-        const target = plan.list().find(card => card.title === params.title);
-        if (!target) throw new Error(`There is no card titled "${params.title}". Use fade_read_plan to see the plan.`);
+        const target = plan.list().find((card) => card.title === params.title);
+        if (!target)
+          throw new Error(`There is no card titled "${params.title}". Check the current requests in context.`);
         if (target.state === 'building') throw new Error('That card is being built right now; leave it alone.');
         const patch: { title?: string; body?: string } = {};
         if (params.newTitle !== undefined) patch.title = params.newTitle;
         if (params.body !== undefined) patch.body = params.body;
         plan.editCard(params.title, patch);
-        this.emit({ type: 'card', title: params.newTitle ?? params.title, action: 'edited' });
         return { content: [{ type: 'text', text: 'Card updated.' }], details: undefined };
       },
     });
-    const readTool = defineTool({
-      name: 'fade_read_plan',
-      label: 'Read plan',
-      description: 'Return the current PLAN.md: pending requests and the parked Later ideas.',
-      parameters: Type.Object({}),
-      execute: async () => {
-        const text = serializePlan({ preamble: '# Plan\n', goal: '', cards: plan.list(), later: plan.later(), done: [] });
-        return { content: [{ type: 'text', text }], details: undefined };
-      },
-    });
-    return [addTool, editTool, readTool, ...this.threadTools(), ...this.actionTools()];
+    return [addTool, editTool, ...this.threadTools(), ...this.actionTools()];
   }
 
   /** Save tangents and bring parked ideas back when requested. */
@@ -141,7 +148,6 @@ export class PiCompanion implements CompanionAgent {
       parameters: Type.Object({ idea: Type.String() }),
       execute: async (_id, params) => {
         plan.park(params.idea);
-        this.emit({ type: 'parked', text: params.idea.trim() });
         return { content: [{ type: 'text', text: 'Parked in Later.' }], details: undefined };
       },
     });
@@ -152,7 +158,6 @@ export class PiCompanion implements CompanionAgent {
       parameters: Type.Object({ item: Type.String(), title: Type.String(), body: Type.String() }),
       execute: async (_id, params) => {
         const title = plan.promote(params.item, params.title, params.body);
-        this.emit({ type: 'card', title, action: 'added' });
         return { content: [{ type: 'text', text: `Added draft card "${title}".` }], details: undefined };
       },
     });
@@ -162,21 +167,27 @@ export class PiCompanion implements CompanionAgent {
   private actionTools() {
     const plan = this.opts.plan;
     const result = (text: string) => ({ content: [{ type: 'text' as const, text }], details: undefined });
-    const titleTool = (name: string, description: string, act: (title: string) => void) => defineTool({
-      name, label: description, description,
-      parameters: Type.Object({ title: Type.String() }),
-      execute: async (_id, params) => {
-        act(params.title);
-        return result('Done.');
-      },
-    });
+    const titleTool = (name: string, description: string, act: (title: string) => void) =>
+      defineTool({
+        name,
+        label: description,
+        description,
+        parameters: Type.Object({ title: Type.String() }),
+        execute: async (_id, params) => {
+          act(params.title);
+          return result('Done.');
+        },
+      });
     return [
       defineTool({
-        name: 'fade_queue', label: 'Build requested card',
+        name: 'fade_queue',
+        label: 'Build requested card',
         description: 'Queue a ready card at the end. Only when the latest human message asks for the work.',
         parameters: Type.Object({
           title: Type.String(),
-          body: Type.String({ description: 'Plain Done when: lines; subjective work needs a human approval criterion.' }),
+          body: Type.String({
+            description: 'Plain Done when: lines; subjective work needs a human approval criterion.',
+          }),
         }),
         execute: async (_id, params) => {
           if (doneWhenLines(params.body).length === 0) {
@@ -186,12 +197,14 @@ export class PiCompanion implements CompanionAgent {
           return result(`Building or queued: ${title}`);
         },
       }),
-      titleTool('fade_ready', 'Ready the draft the human agreed to', title => plan.ready(title)),
-      titleTool('fade_accept', 'Accept the result the human approved', title => plan.accept(title)),
-      titleTool('fade_undo', 'Undo the checkpoint the human requested', title => plan.undo(title)),
-      titleTool('fade_show', 'Show summary, checks, files and diff', title => plan.show(title)),
+      titleTool('fade_ready', 'Ready the draft the human agreed to', (title) => plan.ready(title)),
+      titleTool('fade_accept', 'Accept the result the human approved', (title) => plan.accept(title)),
+      titleTool('fade_undo', 'Undo the checkpoint the human requested', (title) => plan.undo(title)),
+      titleTool('fade_show', 'Show summary, checks, files and diff', (title) => plan.show(title)),
       defineTool({
-        name: 'fade_note_builder', label: 'Steer work', description: 'Forward the human note to the current build.',
+        name: 'fade_note_builder',
+        label: 'Steer work',
+        description: 'Forward the human note to the current build.',
         parameters: Type.Object({ text: Type.String() }),
         execute: async (_id, params) => {
           plan.noteBuilder(params.text);
@@ -199,7 +212,9 @@ export class PiCompanion implements CompanionAgent {
         },
       }),
       defineTool({
-        name: 'fade_stop_builder', label: 'Stop work', description: 'Stop the build at the human request.',
+        name: 'fade_stop_builder',
+        label: 'Stop work',
+        description: 'Stop the build at the human request.',
         parameters: Type.Object({}),
         execute: async () => {
           await plan.stopBuilder();
@@ -207,17 +222,21 @@ export class PiCompanion implements CompanionAgent {
         },
       }),
       defineTool({
-        name: 'fade_revise', label: 'Revise card',
+        name: 'fade_revise',
+        label: 'Revise card',
         description: 'Replace the body. startOver reverts the checkpoint first for a misunderstood ask.',
         parameters: Type.Object({ title: Type.String(), body: Type.String(), startOver: Type.Boolean() }),
         execute: async (_id, params) => {
-          if (doneWhenLines(params.body).length === 0) throw new Error('Put each Done when: criterion on its own line, after a newline.');
+          if (doneWhenLines(params.body).length === 0)
+            throw new Error('Put each Done when: criterion on its own line, after a newline.');
           await plan.revise(params.title, params.body, params.startOver);
           return result('Revised and queued.');
         },
       }),
       defineTool({
-        name: 'fade_move', label: 'Reorder card', description: 'Move a card to the top or end of the queue when asked.',
+        name: 'fade_move',
+        label: 'Reorder card',
+        description: 'Move a card to the top or end of the queue when asked.',
         parameters: Type.Object({ title: Type.String(), toTop: Type.Boolean() }),
         execute: async (_id, params) => {
           plan.move(params.title, params.toTop);

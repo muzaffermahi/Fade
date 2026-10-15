@@ -1,6 +1,8 @@
 import type { StateStore } from './state.js';
 import type { CompanionAgent, CompanionEvent, TranscriptEntry } from './types.js';
 
+const READ_BACK = /^(?:on it\b|queued\b|that'?s (?:underway|in motion)\b|option \d+ it is\b)/i;
+
 /** The human's conversation with the Companion: transcript, streaming text, and errors. */
 export class CompanionChat {
   live: string | undefined;
@@ -25,6 +27,18 @@ export class CompanionChat {
     }
   }
 
+  reply(text: string): void {
+    if (text.startsWith('On it:')) {
+      const start = this.state.data.companion.findLastIndex((entry) => entry.role === 'you');
+      this.state.data.companion = this.state.data.companion.filter(
+        (entry, index) => index <= start || entry.role !== 'companion' || !READ_BACK.test(entry.text),
+      );
+      this.live = undefined;
+    }
+    this.push({ role: 'landed', text });
+    this.notify();
+  }
+
   send(text: string): void {
     const clean = text.trim();
     if (!clean) return;
@@ -36,7 +50,7 @@ export class CompanionChat {
 
   private async run(text: string, context: string): Promise<void> {
     try {
-      await this.companion.send(text, context, e => this.onEvent(e));
+      await this.companion.send(text, context, (e) => this.onEvent(e));
     } catch (error) {
       this.onEvent({ type: 'error', text: error instanceof Error ? error.message : String(error) });
     }
@@ -46,16 +60,24 @@ export class CompanionChat {
   }
 
   private onEvent(event: CompanionEvent): void {
+    const turn = this.state.data.companion.slice(
+      this.state.data.companion.findLastIndex((entry) => entry.role === 'you') + 1,
+    );
+    if (
+      (event.type === 'text' || event.type === 'message') &&
+      READ_BACK.test(event.text) &&
+      turn.some((entry) => entry.role === 'landed' && entry.text.startsWith('On it:'))
+    ) {
+      this.live = undefined;
+      return;
+    }
     if (event.type === 'text') this.live = event.text;
     if (event.type === 'message') {
       this.live = undefined;
       if (event.text.trim()) this.push({ role: 'companion', text: event.text });
     }
-    // Card entries store just the title; the pane looks up the card's live state when it draws them.
-    if (event.type === 'card') this.push({ role: 'card', text: event.title });
-    if (event.type === 'parked') this.push({ role: 'parked', text: event.text });
     if (event.type === 'tool') this.push({ role: 'tool', text: event.text });
-    if (event.type === 'error') this.push({ role: 'error', text: `Companion: ${event.text}` });
+    if (event.type === 'error') this.push({ role: 'error', text: `Fade couldn't reply: ${event.text}` });
     this.notify();
   }
 

@@ -62,15 +62,15 @@ const log = (cwd: string): string[] =>
   execFileSync('git', ['log', '--format=%s'], { cwd, encoding: 'utf8' }).trim().split('\n');
 const planOnDisk = (cwd: string) => parsePlan(readFileSync(join(cwd, 'PLAN.md'), 'utf8'));
 
-test('toggleReady: draft -> ready starts the build; ready -> draft cancels', async () => {
+test('ready starts the requested proposal', async () => {
   const cwd = makeRepo('## [draft] One\n\n## [draft] Two\n');
   const fade = makeFade(cwd, new FakeBuilder(cwd, { speed: 1 }));
   fade.start();
-  fade.toggleReady('Two');
+  fade.ready('Two');
   assert.deepEqual(states(fade), ['draft:One', 'building:Two']);
   await fade.stopBuilder();
   await until(() => fade.view().building === null);
-  fade.toggleReady('One');
+  fade.ready('One');
   assert.equal(fade.view().building?.title, 'One');
   fade.dispose();
 });
@@ -162,8 +162,7 @@ test('accept: review -> done with sha, counter goes up', async () => {
   assert.equal(view.cards.length, 0);
   assert.deepEqual(view.done, [{ title: 'Alpha', sha }]);
   assert.equal(view.reviews.length, 0);
-  assert.equal(view.shippedToday, 1);
-  assert.equal(view.toast, '✓ Alpha is done');
+  assert.equal(view.companion.at(-1)?.text, '✓ Alpha — done.');
   assert.match(readFileSync(join(cwd, 'PLAN.md'), 'utf8'), /## Done\n- Alpha \(/);
   fade.dispose();
 });
@@ -194,19 +193,6 @@ test('undo: removes the card and queues an Undo card that builds', async () => {
   fade.dispose();
 });
 
-test('drop removes draft, ready and review cards (not the building one)', async () => {
-  const cwd = makeRepo('## [ready] B\n\n## [draft] D\n\n## [ready] R\n');
-  const fade = makeFade(cwd, new FakeBuilder(cwd, { speed: 1 }));
-  fade.start();
-  fade.drop('R');
-  assert.deepEqual(states(fade), ['building:B', 'draft:D']);
-  fade.drop('D');
-  fade.drop('B');
-  assert.deepEqual(states(fade), ['building:B']);
-  await fade.stopBuilder();
-  fade.dispose();
-});
-
 test('fade_queue starts at the end; fade_note_builder forwards a note', async () => {
   const cwd = makeRepo('## [draft] Existing\n');
   const fade = makeFade(cwd, new FakeBuilder(cwd, { speed: 1 }));
@@ -216,7 +202,7 @@ test('fade_queue starts at the end; fade_note_builder forwards a note', async ()
   assert.equal(view.building?.title, 'Footer');
   assert.match(view.cards[1]?.body ?? '', /contact link$/);
   fade.noteBuilder('use blue');
-  assert.deepEqual(fade.view().building?.notes, ['use blue']);
+  assert.match(fade.view().companion.at(-1)?.text ?? '', /passed that along/);
   assert.equal(fade.view().cards.length, 2);
   await fade.stopBuilder();
   fade.dispose();
@@ -230,7 +216,6 @@ test('startup recovery: building -> ready (keeps position) and orphan reviews ar
     shipped: { date: '2000-01-01', count: 5 }, companion: [],
   }));
   const fade = makeFade(cwd, new FakeBuilder(cwd, { speed: 1 }));
-  assert.equal(fade.view().shippedToday, 0);
   fade.start();
   assert.deepEqual(states(fade), ['draft:A', 'building:B', 'draft:C']);
   assert.equal(fade.view().reviews.length, 0);
@@ -261,9 +246,9 @@ test('companion messages and cards land in the transcript and plan', async () =>
   await until(() => fade.view().cards.some(c => c.state === 'draft' && c.title !== 'Existing'), 'card');
   await until(() => !fade.view().companionBusy);
   const roles = fade.view().companion.map(e => e.role);
-  assert.deepEqual(roles.slice(0, 2), ['you', 'companion']);
-  assert.ok(roles.includes('card'));
-  assert.ok(JSON.parse(readFileSync(join(cwd, '.fade', 'state.json'), 'utf8')).companion.length >= 3);
+  assert.deepEqual(roles.slice(0, 2), ['you', 'landed']);
+  assert.match(fade.view().companion.at(-1)?.text ?? '', /Want it/);
+  assert.ok(JSON.parse(readFileSync(join(cwd, '.fade', 'state.json'), 'utf8')).companion.length >= 2);
   fade.dispose();
 });
 
@@ -291,7 +276,7 @@ test('the Companion transcript is restored after a restart', async () => {
   const first = makeFade(cwd);
   first.start();
   first.sendToCompanion('hello there');
-  await until(() => first.view().companion.some(e => e.role === 'companion'), 'reply');
+  await until(() => first.view().companion.some(e => e.role === 'landed'), 'reply');
   await until(() => !first.view().companionBusy);
   first.dispose();
   const second = makeFade(cwd);
@@ -341,12 +326,8 @@ test('proofs: quiet landing counts as shipped and undoDone queues the exact chec
     await until(() => fade.view().done.length === 1);
     const view = fade.view();
     assert.equal(view.reviews.length, 0);
-    assert.equal(view.shippedToday, 1);
-    assert.equal(view.session.quiet, 1);
-    assert.equal(view.lastQuiet?.sha, view.done[0]?.sha);
-    assert.match(view.toast ?? '', /✓ Version is done/);
+    assert.ok(view.companion.some(entry => /✓ Version.*checked/.test(entry.text)));
     fade.undoDone('Version');
-    assert.equal(fade.view().lastQuiet, undefined);
     assert.equal(fade.view().done.length, 0);
     assert.match(fade.view().cards[0]?.body ?? '', new RegExp(`commit ${view.done[0]?.sha}`));
     await until(() => fade.view().building === null);
@@ -410,11 +391,11 @@ test('v0.4 yes readies the only proposal; two proposals send yes to Fade', async
     fade.proposeCard('Only', 'One thing.');
     fade.sendToCompanion('yes');
     assert.equal(fade.view().building?.title, 'Only');
-    assert.equal(fade.view().companion.at(-1)?.role, 'you');
+    assert.equal(fade.view().companion.at(-1)?.text, 'On it: Only.');
     fade.proposeCard('A', 'a'); fade.proposeCard('B', 'b');
     fade.sendToCompanion('yes');
     await until(() => !fade.view().companionBusy);
-    assert.ok(fade.view().companion.some(e => e.role === 'companion'));
+    assert.match(fade.view().companion.at(-1)?.text ?? '', /Want it/);
     assert.equal(fade.view().cards.find(c => c.title === 'A')?.state, 'draft');
   } finally { fade.dispose(); }
 });
@@ -426,7 +407,7 @@ test('v0.4 stop stops only the current build and does not start the next', async
     fade.start(); fade.sendToCompanion('stop');
     await until(() => fade.view().building === null);
     assert.equal(fade.view().cards.find(c => c.title === 'Second')?.state, 'ready');
-    assert.match(fade.view().companion.at(-1)?.text ?? '', /is unfinished/);
+    assert.match(fade.view().companion.at(-1)?.text ?? '', /■ Stopped First/);
   } finally { fade.dispose(); }
 });
 
@@ -491,7 +472,7 @@ test('v0.4 yes answers a single look, but a simultaneous draft makes it ambiguou
     fade.proposeCard('Another', 'another');
     fade.sendToCompanion('yes'); await until(() => !fade.view().companionBusy);
     assert.equal(fade.view().reviews.length, 1);
-    for (const card of fade.view().cards.filter(c => c.state === 'draft')) fade.drop(card.title);
+    for (const card of fade.view().cards.filter(c => c.state === 'draft')) fade.model.remove(card.title);
     fade.sendToCompanion('yes');
     assert.equal(fade.view().reviews.length, 0);
     assert.equal(fade.view().done.at(-1)?.title, 'Style');
@@ -501,11 +482,11 @@ test('v0.4 yes answers a single look, but a simultaneous draft makes it ambiguou
 test('v0.4 landing copy covers every verdict without a model call', () => {
   const base: Review = { title: 'Export', verdict: 'said', summary: '', howToTry: 'open ./export', files: [], finishedAt: 0,
     checks: [{ criterion: 'files open in Obsidian.', passed: true }] };
-  assert.match(landingMessage(base), /couldn't check files open in Obsidian\. Ask/);
+  assert.match(landingMessage(base), /not checked: files open in Obsidian\. Say/);
   assert.match(landingMessage({ ...base, verdict: 'look', checks: [{ criterion: 'calm', passed: true, look: 'Calmer?' }] }), /Your call: Calmer/);
   assert.match(landingMessage({ ...base, verdict: 'failed' }, true), /Sent it back once/);
-  assert.match(landingMessage({ ...base, verdict: 'unfinished' }), /Say "continue"/);
-  assert.match(landingMessage({ ...base, verdict: 'none' }), /couldn't check/);
+  assert.match(landingMessage({ ...base, verdict: 'unfinished' }), /not checked.*Say "continue"/);
+  assert.match(landingMessage({ ...base, verdict: 'none' }), /not checked/);
 });
 
 test('v0.4 a correction can restart a quietly landed card from its exact checkpoint', async () => {
@@ -557,7 +538,7 @@ test('v0.4 a failed checkpoint stays in needs-you and explains the failure', asy
     fade.start(); await until(() => fade.view().reviews.length === 1);
     assert.equal(fade.view().done.length, 0);
     assert.equal(fade.view().reviews[0]?.verdict, 'verified');
-    assert.match(fade.view().companion.at(-1)?.text ?? '', /◆ Demo passed its checks.*no checkpoint.*invalid path: nul/);
+    assert.match(fade.view().companion.at(-1)?.text ?? '', /○ Demo.*not checked.*no checkpoint.*invalid path: nul/);
   } finally { fade.dispose(); }
 });
 
@@ -569,9 +550,76 @@ test('polish: checked outcomes never print the raw proof command', () => {
       proof: 'node -e "require(123)"', ran: { code: 0, tail: '', ms: 1 },
     }],
   };
-  assert.equal(landingMessage(review), "✓ Search works — typing 'gro' finds Groceries (checked).");
+  assert.equal(landingMessage(review), "✓ Search works — typing 'gro' finds Groceries · checked");
   assert.doesNotMatch(landingMessage({ ...review, checks: [{
     criterion: 'node cli.js --version prints the right version', passed: true,
     proof: 'node cli.js --version', ran: { code: 0, tail: '', ms: 1 },
   }] }), /node|cli.js|--version/);
+});
+
+test('final pass: normalized queue replies come from Fade and replace model acknowledgements', async () => {
+  const cwd = makeRepo('');
+  const fade = makeFade(cwd);
+  try {
+    fade.sendToCompanion('add a dark mode toggle');
+    await until(() => !fade.view().companionBusy && fade.view().done.length === 1);
+    const replies = fade.view().companion.filter(entry => /^On it:/i.test(entry.text));
+    assert.deepEqual(replies, [{ role: 'landed', text: 'On it: Dark mode toggle.' }]);
+    assert.equal(fade.view().done[0]?.title, 'Dark mode toggle');
+    fade.sendToCompanion('undo that');
+    assert.equal(fade.view().companion.at(-1)?.text, '↩ Undoing Dark mode toggle…');
+    await until(() => !fade.view().building);
+    assert.equal(fade.view().companion.at(-1)?.text, '↩ Dark mode toggle is undone.');
+  } finally { fade.dispose(); }
+});
+
+test('final pass: dirty launch warns and the current-branch commit notice is said once', () => {
+  const cwd = makeRepo('');
+  writeFileSync(join(cwd, 'README.md'), 'my uncommitted work');
+  const first = makeFade(cwd);
+  first.welcome();
+  assert.match(first.view().companion[0]?.text ?? '', /uncommitted changes/);
+  assert.match(first.view().companion[1]?.text ?? '', /commit each change on .*fade: …/);
+  first.dispose();
+  const second = makeFade(cwd);
+  try {
+    second.welcome();
+    assert.equal(second.view().companion.filter(e => /commit each change on/.test(e.text)).length, 1);
+    assert.equal(readFileSync(join(cwd, 'README.md'), 'utf8'), 'my uncommitted work');
+  } finally { second.dispose(); }
+});
+
+test('final pass: continue resumes one paused request without a model turn', async () => {
+  const cwd = makeRepo('## [draft] Paused\nA saved request.\n');
+  const fade = makeFade(cwd, new FakeBuilder(cwd, {speed: 1}));
+  try {
+    fade.sendToCompanion('continue');
+    assert.equal(fade.view().building?.title, 'Paused');
+    assert.equal(fade.view().companionBusy, false);
+    assert.equal(fade.view().companion.at(-1)?.text, 'On it: Paused.');
+    await fade.stopBuilder();
+  } finally {fade.dispose();}
+});
+
+test('final pass: continue retries a failed result; it never accepts the failed claim', async () => {
+  const cwd = makeRepo('## [ready] Retry\nDone when: result works.\n');
+  const builder = new FakeBuilder(cwd);
+  let attempts = 0;
+  builder.build = async () => {
+    attempts++;
+    writeFileSync(join(cwd, 'result.txt'), String(attempts));
+    return {kind:'done',summary:'Result.',howToTry:'',checks:[{
+      criterion:'result works.',passed:attempts>1,proof:`node -e "process.exit(${attempts>1?0:1})"`,
+    }]};
+  };
+  const fade = makeFade(cwd,builder);
+  try {
+    fade.start();await until(()=>fade.view().reviews.length===1);
+    fade.sendToCompanion('continue');
+    assert.equal(fade.view().companionBusy,false);
+    assert.equal(fade.view().done.length,0);
+    await until(()=>fade.view().done.length===1);
+    assert.equal(attempts,2);
+    assert.equal(fade.view().landedReviews[0]?.checks?.[0]?.ran?.code,0);
+  } finally {fade.dispose();}
 });

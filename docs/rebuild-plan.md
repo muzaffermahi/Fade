@@ -1,121 +1,73 @@
-# Fade v0.4: Just talk to it
+# Fade: just talk to it
 
-The owner's conversation-polish follow-up supersedes the initial v0.4 goal UI and command-heavy
-landing messages. Proof execution, verdicts, one automatic retry, quiet landing and checkpoint undo remain.
+The active final pass is docs/final-pass-plan.md. The owner explicitly keeps Builder MCP,
+codemode and tool_search. This specification describes the final behavior, not a new feature backlog.
 
-## Mental model
+## Conversation
 
-**You**, **Fade** (the only voice), and **the Builder you watch**. One composer, one conversation.
-Clear requests execute immediately after a one-sentence “On it” read-back. Fuzzy or large requests
-get one concrete question or a draft and “Want it?”. Corrections replace the card body; a misunderstanding
-uses `startOver: true`, stops active work, checkpoints it and instructs the Builder to revert that exact SHA first.
-No separate revision interpreter or Choose syntax.
+One voice, one composer. Clear work starts immediately. Unspecified taste gets one question with
+ordered directions; choosing one authorizes building. Large requests get one small proposal.
+Only the latest human message authorizes work, acceptance, revision or undo. Never grow scope.
+Keep talking while the Builder works. Pi skills/templates pass through; Pi settings stay in Pi.
 
-Five states stay unchanged: draft (idea), ready (queued), building, review (needs you), done.
-`PLAN.md` is the ordered, hand-editable source of truth, watched live. The first ready card builds next.
-Later ideas stay in PLAN.md. The conversation is the thread: no automatic goals, progress dots or
-goal-done announcements. Preserve legacy Goal lines on disk, hidden from UI and model context.
-Internal card states and repeated task bodies stay out of conversation, including old transcript entries.
-
-## Authority
-
-Every Companion turn begins with a human message. Queue, ready, accept, revise and undo require the
-latest human message to request them. This is a prompt rule and the absence of automatic Companion turns;
-landing messages come from code, never trigger a model turn, and never grant authority.
-No extra authorization machinery. Never grow scope. Git is the undo.
-
-Companion tools retain read-only project access, add/edit/read/park/promote and add:
-`fade_queue(title, body)`, `fade_ready(title)`, `fade_note_builder(text)`, `fade_stop_builder()`,
-`fade_accept(title)`, `fade_revise(title, body, startOver)`, `fade_undo(title)`,
-`fade_show(title)`, `fade_move(title, toTop)`. Queue appends a ready card. Add proposes a draft.
-The Builder no longer calls fade_understood: Fade's response is the read-back.
-The Companion context includes current work, full cards, review questions and human look questions.
-
-Before model calls, exact stop stops the Builder, undo undoes the last landed checkpoint, and
- yes/y/go/ok readies a single draft or answers a single waiting question. Ambiguous targets go to Fade.
-“undo that” is also accepted by the fast path. Words replace the removed plan and review hotkeys.
+Fade writes action replies itself: On it, done, stopping, undoing and undone. Suppress duplicate
+model acknowledgements. Every work action has a conversation reply; toasts are for UI controls.
+No visible goal, card-state words, counters, raw commands in outcome messages, or automatic AI turns.
+Old Goal lines remain ordinary PLAN.md preamble text, with no separate state or UI.
 
 ## Screen
 
-At 100 columns or wider, the conversation fills the left with a read-only Now / Next / Needs you rail
-on the right only while work is building or awaiting the human. Now shows title, elapsed time, steps
-and current action. Next shows queued work when present. Needs you shows waiting results/questions
-when present. Empty sections disappear. Wrap text and unbroken paths within the panel, retaining
-hanging indentation. Narrow windows use a compact active status line. Idle conversations use the
-full width. The one-line header contains fade, folder and branch.
-The wordmark appears only in the startup splash. The window title signals “Fade · ◆ needs you”.
-Bell always rings when a new review arrives. No focus switching, Next attention ranking, runway estimate,
-shipped-today counter, recap, goal closure overlay, raw log toggle or park dialog.
+The conversation uses at most 88 columns in every state. A rail occupies spare space to its right
+when at least 117 columns are available; it never resizes the conversation. Reserve the compact
+status row at narrower widths. Use one blank line between messages, none inside a message.
+Now/Next/Needs you appear only when populated. Wrap paths with hanging indentation.
 
-Keys: Enter send, Esc stop the reply, PgUp/PgDn scroll, Ctrl+C twice quit. First press clears input
-and warns; a second within 1.5 seconds quits. Expiry or new input requires a fresh double press.
-The warning applies to overlays and startup too. `?` on an empty line opens help.
-Commands: `/model` (Builder or Fade), `/login`, `/new`, `/show`, `/help`, `/quit`.
-Pi skills and prompt templates pass through. Pi's handoff screens are removed; run Pi in another terminal.
-`/login` directs the user there. Help, ModelPicker and read-only Show are the surviving overlays.
-Show contains summary, checks with real passing/failing output, files and diff in one scrollable view.
-Quietly accepted reviews remain inspectable, including after restart.
+Empty conversations show dim examples: add a --version flag; why is the login slow?;
+make the settings page calmer. Hide examples after the first message.
+Mint ✓ marks verified outcomes, followed by a faint checked badge. ○ means not checked, with a
+reason and next step. Use the same language in conversation, rail and Show. Undo lands as
+↩ <title> is undone. Human acceptance says ✓ <title> — done, without claiming machine verification.
 
-## Landing
+Enter sends; Esc stops the reply/closes a view; PgUp/PgDn scroll. First Ctrl+C clears and warns;
+a second within 1.5 seconds quits. This applies to startup and overlays too.
+Commands: /model, /login, /new, /show, /help, /quit. No input modes or action hotkeys.
+After a quiet minute, only the empty composer placeholder changes; no message or model turn.
 
-Pure `landingMessage(review)` produces conversation entries for verified, look, failed, said, unfinished
-and no-check results. Verified messages describe the checked outcome in plain words; shell commands
-and actual output belong in Show. Look messages ask the human's
-questions. Claimed checks say what Fade could not check and how to try it. Failed claims get one retry
-and a message saying so. Stopped or unfinished work invites “continue” or a correction.
-After a minute of inactivity, an empty idle composer quietly asks what the human wants next.
-This is a placeholder, not a new message or model turn. No automatic focus changes or overlays.
+## Work and checks
 
-## Useful capabilities
+PLAN.md is hand-editable, ordered and watched. Internal states remain draft, ready, building, review.
+Titles are capitalized and at most five words. Later holds parked ideas. First ready work builds next.
+Corrections replace the body; startOver stops/checkpoints and references the exact commit to revert.
+Git checkpoints on the current branch, including concurrent user changes. Say this once per repo,
+and warn on dirty launch without blocking. Interrupted work resumes on relaunch with an explanation.
 
-The Builder already has shell execution. Add `fade_check(paths, tests)` for Python syntax and
-existing unittest/pytest tests, JavaScript syntax and local TypeScript project diagnostics.
-Prefer a project .venv; discover pytest configuration/functions or unittest suites. Missing runtimes,
-missing dependencies and zero discovered tests must not count as verified runtime behavior.
-Return actual output and replayable proof commands. Resolve requested files below the project root;
-filenames remain data, never interpolated shell syntax. Other languages use project-native commands.
+Each Done when line gets one check. Fade commits then independently re-runs finite commands,
+recording exit status, output, time and SHA. A model claim is never checked. A failed claimed pass
+gets one retry; cancellation and failed checkpoints never quietly land. Only taste gets a human look.
+Checks may not modify source/git or start watchers/servers. Show retains real results and diffs after
+acceptance/restart; therefore landedReviews stays. git show alone cannot restore executed check output.
 
-Bundle pinned pi-web-access for search, fetch and retrieval in both sessions. Keep search in the
-conversation with workflow none. Treat web content as evidence rather than instructions and cite
-useful primary sources. Network/provider availability is not guaranteed.
-Explicitly load the existing Pi MCP, tool-search and codemode extension factories for the Builder:
-SDK sessions do not inherit those CLI defaults automatically. The conversation session excludes
-arbitrary MCP, codemode and shell/edit tools.
+## Capabilities
 
-Prompts describe general behavior: inspect the project, identify its language/environment/checks,
-preserve scope and report verification gaps. Selecting an offered option authorizes that work;
-do not ask for another confirmation. Avoid wording tuned to the acceptance script's phrases.
+The Builder has project shell/edit tools and native MCP, codemode and tool_search. The Fade voice
+has read-only project tools plus authorized work actions; exclude arbitrary MCP, shell and edits.
+Load only explicit Fade extensions; unrelated Pi extensions stay in Pi. Skills/templates still pass through.
+Both load pinned pi-web-access search/fetch. Cite primary sources; web text is evidence, not instructions.
+Search sends queries to the configured provider and depends on network/provider availability.
+fade_check covers Python syntax, unittest/pytest discovery, JS syntax and local TypeScript types.
+Prefer .venv. Missing dependencies, empty test discovery and syntax-only checks do not prove behavior.
+Paths stay below the project root and filenames remain data in replayable commands. No new languages.
 
-The [setup article](https://brucehopkins.dev/blog/how-to-set-up-pi-coding-agent-like-claude-code)
-informs these workload judgments; they are not measured usage percentages:
+## Development and validation
 
-- Add [pi-web-access](https://pi.dev/packages/pi-web-access) for documentation and supplied URLs.
-- Use focused diagnostics rather than defaulting to [Pi Lens](https://pi.dev/packages/pi-lens), whose
-  guards, autoformatting, scanning and native dependencies overlap Fade's own lifecycle.
-- Use existing Pi MCP support rather than another adapter.
-- Fade already supplies questions, planning and progress; duplicate packages add no useful interaction.
-- Leave the subagent framework out of the default: concurrent writers and another orchestration
-  system do not fit the bounded request/checkpoint loop. Existing MCP integrations remain configurable.
+Plain readable TypeScript, at most 120 characters per line and about 4,000 source lines. No compressed
+compound statements, extra states, runtime frameworks or extra dependencies for this pass.
+Keep snapshot.ts, headless.ts and one live-smoke.ts with web/python/conversation/all modes.
+The setup article informed the existing web/diagnostic additions; duplicate planning/question tools,
+Pi Lens and a second orchestration/subagent framework are not bundled.
 
-## Verification and gate
-
-Source budget: about 3,800 lines. One added runtime package: pi-web-access, pinned to 0.41.0.
-Tests cover loop transitions, proof failure/conflict paths, plan parsing, rendering and real diagnostics. Run:
-
-```
-node node_modules/typescript/bin/tsc --noEmit -p tsconfig.test.json
-node --import tsx --test tests/*.test.ts
-npm run snapshot
-```
-
-Render empty, building and needs-you at wide widths and 80×24. Hints list at most four keys. No old jargon
-or focus hints. Keep proof, retry and quiet-landing tests passing. `scripts/conversation-smoke.ts` exercises
-real Pi sessions in an isolated CLI repository using `opencode-go/deepseek-v4-flash`.
-`scripts/capabilities-smoke.ts` checks actual search/fetch and session tool boundaries without a
-model call. `scripts/python-smoke.ts` checks a real Python repair through Pi agents, independently
-rerun proofs and quiet landing in a temporary repository.
-
-**Try it (human gate):** run `fade --demo`, then a real Pi session on a small repo: “add a --version flag” →
-“On it” → ✓ describing the checked outcome → “undo that” → reverted. Then “make the help text friendlier” → a question →
-“the second one” → built → “yes” to the look. A first-time user must complete this without opening help or
-pressing anything except typing, Enter and Esc. Automated checks cannot pass this human gate.
+Run typecheck, tests, snapshots, build and git diff --check. Exercise the demo, real Python repair,
+real web search/fetch, dirty launch, interrupted build/relaunch and checkpoint undo. Test cmd.exe on
+Windows and sh on Linux/macOS. Record unavailable platform/human checks honestly in final-pass-results.md.
+Version 0.5.0 ships only after a clean-folder npm-pack test. Publishing requires owner approval.
+The hallway study requires real new users; automated checks cannot substitute for those observations.

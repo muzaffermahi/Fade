@@ -30,17 +30,22 @@ export function createDemoWorkspace(empty = false): string {
 
   new PlanStore(cwd).save({
     preamble: '# Plan\n',
-    goal: '',
     cards: [
       {
-        title: 'Core notes app', state: 'review',
+        title: 'Core notes app',
+        state: 'review',
         body: 'Add, edit and delete notes, saved to disk.\nDone when: a note survives a reload.',
       },
       {
-        title: 'Search', state: 'ready',
+        title: 'Search',
+        state: 'ready',
         body: 'Search notes by title and body as you type.\nDone when: typing "gro" shows "Groceries".',
       },
-      { title: 'Notebook styling', state: 'draft', body: 'Warm paper, roomy margins, one column.\nDone when: it reads like a page.' },
+      {
+        title: 'Notebook styling',
+        state: 'draft',
+        body: 'Warm paper, roomy margins, one column.\nDone when: it reads like a page.',
+      },
     ],
     later: ['Export to markdown', 'Tags'],
     done: [{ title: 'Project setup' }],
@@ -60,7 +65,10 @@ export function createDemoWorkspace(empty = false): string {
   });
   state.data.companion.push(
     { role: 'you', text: 'Could it feel more like a notebook?' },
-    { role: 'companion', text: 'Yes: warm paper, roomy margins, quiet controls. That is a step for after search lands.' },
+    {
+      role: 'companion',
+      text: 'Yes: warm paper, roomy margins, quiet controls. That is a step for after search lands.',
+    },
     { role: 'card', text: 'Notebook styling' },
     { role: 'you', text: 'oh and export to markdown at some point, later' },
     { role: 'companion', text: 'Saved it for later.' },

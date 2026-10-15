@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { TuiMainScreen, visibleWidth } from '@earendil-works/pi-tui';
+import { Editor, TuiMainScreen, visibleWidth } from '@earendil-works/pi-tui';
 import { createHarness, FakeTerminal, type Scenario } from '../scripts/headless.js';
-import { dissolve } from '../src/ui/strip.js';
 import { CompanionRenderer } from '../src/ui/companion-pane.js';
 import { rail } from '../src/ui/rail.js';
 import { ShowOverlay } from '../src/ui/overlays.js';
 import { Splash } from '../src/ui/splash.js';
+import { renderScreen } from '../src/ui/screen.js';
+import { editorTheme } from '../src/ui/overlays.js';
 import type { Review } from '../src/types.js';
 const strip = (line: string): string => line.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '').replace(/\x1b_[^\x07]*\x07/g, '');
 for (const [width, height] of [[120, 40], [80, 24], [60, 16]] as const) {
@@ -71,6 +72,25 @@ test('v0.4 empty enter does nothing, typing sends, ctrl+c warns before quitting'
     assert.equal(quits, 1);
   } finally { h.dispose(); }
 });
+
+test('final pass: work never changes conversation wrapping or message spacing', () => {
+  const h = createHarness('building', 120, 40);
+  try {
+    const view = h.fade.view();
+    view.companion = [{ role: 'companion', text: 'A steady conversation. '.repeat(200) + '\n\nOne message.' }];
+    const parts = {
+      editor: new Editor(new TuiMainScreen(new FakeTerminal(120, 40)), editorTheme()),
+      companion: new CompanionRenderer(),
+    };
+    const meta = { cwd: h.cwd, branch: 'main', builderModel: 'demo', companionModel: 'demo' };
+    const state = { scroll: 0, toast: undefined, now: 1000 };
+    const active = renderScreen(view, state, parts, meta, 120, 39).slice(2, 33);
+    const idle = renderScreen({ ...view, building: null, reviews: [] }, state, parts, meta, 120, 39).slice(2, 33);
+    assert.deepEqual(active.map(line => strip(line).slice(0, 88)), idle.map(line => strip(line).slice(0, 88)));
+    const message = parts.companion.transcriptLines(view, 88).map(strip);
+    assert.ok(message.every(line => line.trim()), 'no blank lines inside one message');
+  } finally { h.dispose(); }
+});
 test('v0.4 no focus switching or action keys: space and u are ordinary input', () => {
   const h = createHarness('review', 120, 40);
   try {
@@ -80,16 +100,9 @@ test('v0.4 no focus switching or action keys: space and u are ordinary input', (
     assert.equal(h.fade.view().reviews.length, 1);
   } finally { h.dispose(); }
 });
-test('the rail dissolve still loses characters right to left', () => {
-  assert.equal(strip(dissolve('Core notes app', 0)), 'Core notes app');
-  assert.match(strip(dissolve('Core notes app', 0.5)), /^Core/);
-  assert.equal(strip(dissolve('Core notes app', 1)).trim(), '');
-});
-
 test('polish: idle uses full width and hides historical state and goal messages', () => {
   const h = createHarness('empty', 120, 40);
   try {
-    h.fade.model.plan.goal = 'Legacy goal';
     h.fade.model.plan.cards.push({ title: 'Private proposal', state: 'draft', body: 'Repeated body.' });
     h.fade.sendToCompanion('hello');
     h.app.handleInput('typing');

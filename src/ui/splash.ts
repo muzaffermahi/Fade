@@ -13,7 +13,11 @@ export class Splash implements Component {
   private entered = false;
   private quitArmedAt = 0;
 
-  constructor(private readonly tui: TUI, private readonly onDone: () => void, private readonly onQuit: () => void) {
+  constructor(
+    private readonly tui: TUI,
+    private readonly onDone: () => void,
+    private readonly onQuit: () => void,
+  ) {
     this.timer = setInterval(() => {
       this.maybeEnter();
       this.tui.requestRender();
@@ -58,9 +62,10 @@ export class Splash implements Component {
     const rows = Math.max(1, this.tui.terminal.rows - 1);
     const seed = Math.floor((Date.now() - this.started) / TWINKLE_MS);
     const mark = wordmark(width, seed);
-    const center = (line: string, visible: number): string => ' '.repeat(Math.max(0, Math.floor((width - visible) / 2))) + line;
-    const markWidth = Math.max(...mark.map(l => l.replace(/\x1b\[[0-9;]*m/g, '').length));
-    const lines = mark.map(line => center(line, markWidth));
+    const center = (line: string, visible: number): string =>
+      ' '.repeat(Math.max(0, Math.floor((width - visible) / 2))) + line;
+    const markWidth = Math.max(...mark.map((l) => l.replace(/\x1b\[[0-9;]*m/g, '').length));
+    const lines = mark.map((line) => center(line, markWidth));
     const tagline = 'A tool for the mind.';
     lines.push('', center(c.muted(tagline), tagline.length), '');
     if (this.error) {
@@ -74,6 +79,6 @@ export class Splash implements Component {
     const top = Math.max(0, Math.floor((rows - lines.length) / 2));
     const out = [...Array(top).fill(''), ...lines];
     while (out.length < rows) out.push('');
-    return out.slice(0, rows).map(line => paintLine(line, width));
+    return out.slice(0, rows).map((line) => paintLine(line, width));
   }
 }

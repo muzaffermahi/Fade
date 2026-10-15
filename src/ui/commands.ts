@@ -21,24 +21,32 @@ export const APP_COMMANDS: SlashCommand[] = [
   { name: 'login', description: 'Connect a provider with Pi' },
   { name: 'new', description: 'Start a fresh Fade conversation' },
   { name: 'show', description: 'Summary, checks, files and diff', argumentHint: '[title]' },
-  { name: 'help', description: 'Help' }, { name: 'quit', description: 'Quit Fade' },
+  { name: 'help', description: 'Help' },
+  { name: 'quit', description: 'Quit Fade' },
 ];
 
 function applyResult(host: CommandHost, which: 'builder' | 'companion', result: SlashResult): void {
   if (result.kind === 'prompt') return host.fade.sendToCompanion(result.text);
-  if (result.kind === 'info') return host.toast(result.text);
   if (result.kind === 'pick-model') {
     const agent = host.fade.slashHost(which);
     if (!agent) return;
-    host.show(new ModelPickerOverlay(host.rows, which === 'builder' ? 'Builder' : 'Fade', result.models, result.current, selector => {
-      host.close();
-      void agent.setModel(selector).then(r => applyResult(host, which, r)).catch(e => host.toast(String(e)));
-    }, () => host.close()));
+    host.show(
+      new ModelPickerOverlay(
+        host.rows,
+        which === 'builder' ? 'Builder' : 'Fade',
+        result.models,
+        result.current,
+        (selector) => {
+          host.close();
+          void agent
+            .setModel(selector)
+            .then((r) => applyResult(host, which, r))
+            .catch((e) => host.toast(String(e)));
+        },
+        () => host.close(),
+      ),
+    );
     return;
-  }
-  if (result.model) {
-    if (which === 'builder') host.meta.builderModel = result.model;
-    else host.meta.companionModel = result.model;
   }
   if (result.newSession && which === 'companion') host.fade.clearCompanionChat();
   host.toast(result.text);
@@ -51,10 +59,19 @@ export async function runSlash(host: CommandHost, text: string): Promise<void> {
   if (name === 'quit') return host.quit();
   if (name === 'show') return host.openShow(args || undefined);
   if (name === 'model' && !args) {
-    host.show(new ModelPickerOverlay(host.rows, 'Choose whose', ['builder', 'fade'], 'fade', role => {
-      host.close();
-      void runSlash(host, `/model ${role}`);
-    }, () => host.close()));
+    host.show(
+      new ModelPickerOverlay(
+        host.rows,
+        'Choose whose',
+        ['builder', 'fade'],
+        'fade',
+        (role) => {
+          host.close();
+          void runSlash(host, `/model ${role}`);
+        },
+        () => host.close(),
+      ),
+    );
     return;
   }
   let which: 'builder' | 'companion' = 'companion';

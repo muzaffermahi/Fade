@@ -63,23 +63,23 @@ test('preamble is kept, and defaults when missing', () => {
 test('goal line and Later section round-trip, in a stable order', () => {
   const text = '# Plan\nGoal: Search that feels instant\n\n## [ready] Index\nbody\n\n## Later\n- Tags\n- Export\n\n## Done\n- Setup\n';
   const plan = parsePlan(text);
-  assert.equal(plan.goal, 'Search that feels instant');
-  assert.equal(plan.preamble, '# Plan\n');
+  assert.match(plan.preamble, /Goal: Search that feels instant/);
+  assert.equal(plan.preamble, '# Plan\nGoal: Search that feels instant\n');
   assert.deepEqual(plan.later, ['Tags', 'Export']);
   assert.equal(serializePlan(plan), text);
 });
 
 test('older plans without a goal or Later still parse, and gain nothing they did not have', () => {
   const plan = parsePlan(SAMPLE);
-  assert.equal(plan.goal, '');
+  assert.ok(!('goal' in plan));
   assert.deepEqual(plan.later, []);
   assert.equal(serializePlan(plan), SAMPLE);
 });
 
 test('a goal line anywhere in the preamble is found, case-insensitively', () => {
   const plan = parsePlan('# Notes\n\nSome intro.\ngoal:  Ship it  \n\n## [draft] A\n');
-  assert.equal(plan.goal, 'Ship it');
-  assert.equal(plan.preamble, '# Notes\n\nSome intro.\n');
+  assert.match(plan.preamble, /goal:  Ship it/);
+  assert.equal(plan.preamble, '# Notes\n\nSome intro.\ngoal:  Ship it\n');
 });
 
 test('"Done when" lines are pulled out of a card body', () => {

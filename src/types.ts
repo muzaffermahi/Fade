@@ -12,8 +12,6 @@ export interface DoneEntry {
 }
 export interface Plan {
   preamble: string;
-  /** Legacy PLAN.md metadata, preserved on disk but hidden from the conversation. */
-  goal: string;
   cards: Card[];
   /** Parked ideas to revisit later ("## Later"). */
   later: string[];
@@ -43,25 +41,17 @@ export type BuildOutcome =
   | { kind: 'stopped' }
   | { kind: 'failed'; error: string };
 
-export type BuilderEvent =
-  | { type: 'steps'; steps: Step[] }
-  | { type: 'action'; text: string } // e.g. "editing src/search.ts"
-  | { type: 'text'; text: string } // full text of the assistant message being streamed
-  | { type: 'message'; text: string } // a finished assistant message
-  | { type: 'log'; line: string }; // raw tool line for the Ctrl+L view
+export type BuilderEvent = { type: 'steps'; steps: Step[] } | { type: 'action'; text: string };
 
 export type CompanionEvent =
   | { type: 'text'; text: string } // full streamed text of the current reply
   | { type: 'message'; text: string } // final reply
-  | { type: 'card'; title: string; action: 'added' | 'edited' }
-  | { type: 'parked'; text: string }
   | { type: 'tool'; text: string } // e.g. "reading src/app.ts"
   | { type: 'error'; text: string };
 
 /** What a slash command asks the UI to do next. */
 export type SlashResult =
   | { kind: 'toast'; text: string; model?: string; newSession?: boolean }
-  | { kind: 'info'; text: string }
   | { kind: 'prompt'; text: string } // send the raw text to the agent (skills, prompt templates)
   | { kind: 'pick-model'; models: string[]; current: string };
 
@@ -101,7 +91,6 @@ export interface PlanApi {
   /** Returns the final unique title. */
   addCard(title: string, body: string): string;
   editCard(title: string, patch: { title?: string; body?: string }): void;
-  later(): string[];
   park(text: string): void;
   /** Turns a parked Later item into a draft card; returns the card's title. */
   promote(item: string, title: string, body: string): string;

@@ -1,5 +1,8 @@
 # Fade final pass: ready to share
 
+**Owner override:** retain Builder MCP, codemode and tool_search. Complete available work;
+record macOS and human-study gates as pending. Publishing still requires approval.
+
 **Goal:** a stranger installs Fade, tries it on their own project, and within five minutes thinks:
 *"It checks its own work, and it only asks me about taste."*
 

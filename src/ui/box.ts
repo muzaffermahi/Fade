@@ -7,6 +7,6 @@ export function box(title: string, inner: string[], width: number): string[] {
   const room = Math.max(4, width - 4);
   const label = ` ${bold(c.mint(title))} `;
   const top = `${edge('╭─')}${label}${edge('─'.repeat(Math.max(0, width - 3 - visibleWidth(label))) + '╮')}`;
-  const rows = inner.map(line => `${edge('│')} ${truncateToWidth(line, room, '…', true)} ${edge('│')}`);
-  return [top, ...rows, edge(`╰${'─'.repeat(Math.max(0, width - 2))}╯`)].map(line => paintLine(line, width));
+  const rows = inner.map((line) => `${edge('│')} ${truncateToWidth(line, room, '…', true)} ${edge('│')}`);
+  return [top, ...rows, edge(`╰${'─'.repeat(Math.max(0, width - 2))}╯`)].map((line) => paintLine(line, width));
 }

@@ -10,7 +10,6 @@ export const PALETTE = {
   rose: '#F2A7A7',
 } as const;
 
-export const GLYPH = { draft: '·', ready: '○', building: '◌', review: '◆', done: '✓' } as const;
 export const SPINNER = ['◜', '◠', '◝', '◞', '◡', '◟'] as const;
 export const SPINNER_MS = 100;
 
@@ -24,20 +23,19 @@ function rgb(hex: string): [number, number, number] {
 }
 
 export function fg(hex: string): Paint {
-  if (PLAIN) return text => text;
+  if (PLAIN) return (text) => text;
   const [r, g, b] = rgb(hex);
-  return text => `\x1b[38;2;${r};${g};${b}m${text}\x1b[39m`;
+  return (text) => `\x1b[38;2;${r};${g};${b}m${text}\x1b[39m`;
 }
 
 export function bg(hex: string): Paint {
-  if (PLAIN) return text => text;
+  if (PLAIN) return (text) => text;
   const [r, g, b] = rgb(hex);
-  return text => `\x1b[48;2;${r};${g};${b}m${text}\x1b[49m`;
+  return (text) => `\x1b[48;2;${r};${g};${b}m${text}\x1b[49m`;
 }
 
-export const bold: Paint = text => (PLAIN ? text : `\x1b[1m${text}\x1b[22m`);
-export const dim: Paint = text => (PLAIN ? text : `\x1b[2m${text}\x1b[22m`);
-export const underline: Paint = text => (PLAIN ? text : `\x1b[4m${text}\x1b[24m`);
+export const bold: Paint = (text) => (PLAIN ? text : `\x1b[1m${text}\x1b[22m`);
+export const underline: Paint = (text) => (PLAIN ? text : `\x1b[4m${text}\x1b[24m`);
 
 export const c = {
   text: fg(PALETTE.text),

@@ -22,14 +22,16 @@ function modelName(session: AgentSession): string {
   return model ? `${model.provider}/${model.id}` : 'none';
 }
 
-/** Pi's slash commands, run against one agent's session. */
 export class PiSlash implements SlashHost {
   constructor(private readonly target: SlashTarget) {}
 
   commands(): SlashCommand[] {
     const session = this.target.session();
-    const templates = session?.promptTemplates.map(t => ({ name: t.name, description: t.description })) ?? [];
-    const skills = session?.resourceLoader.getSkills().skills.map(s => ({ name: `skill:${s.name}`, description: s.description })) ?? [];
+    const templates = session?.promptTemplates.map((t) => ({ name: t.name, description: t.description })) ?? [];
+    const skills =
+      session?.resourceLoader
+        .getSkills()
+        .skills.map((s) => ({ name: `skill:${s.name}`, description: s.description })) ?? [];
     return [...templates, ...skills];
   }
 
@@ -48,13 +50,16 @@ export class PiSlash implements SlashHost {
 
   private async dispatch(session: AgentSession, name: string, args: string, text: string): Promise<SlashResult> {
     switch (name) {
-      case 'model': return this.model(session, args);
-      case 'new': return this.fresh(session);
-      case 'login': return toast('Run pi in another terminal, use /login there, then restart Fade.');
+      case 'model':
+        return this.model(session, args);
+      case 'new':
+        return this.fresh(session);
+      case 'login':
+        return toast('Run pi in another terminal, use /login there, then restart Fade.');
     }
-    const isTemplate = session.promptTemplates.some(t => t.name === name);
-    const isSkill = name.startsWith('skill:')
-      && session.resourceLoader.getSkills().skills.some(s => `skill:${s.name}` === name);
+    const isTemplate = session.promptTemplates.some((t) => t.name === name);
+    const isSkill =
+      name.startsWith('skill:') && session.resourceLoader.getSkills().skills.some((s) => `skill:${s.name}` === name);
     if (isTemplate || isSkill) {
       if (this.target.acceptsPrompts) return { kind: 'prompt', text };
       return toast('Skills and prompt templates go to the Companion.');
@@ -64,7 +69,7 @@ export class PiSlash implements SlashHost {
 
   private async model(session: AgentSession, selector: string): Promise<SlashResult> {
     if (!selector) {
-      const models = (await this.target.runtime.getAvailable()).map(m => `${m.provider}/${m.id}`);
+      const models = (await this.target.runtime.getAvailable()).map((m) => `${m.provider}/${m.id}`);
       return { kind: 'pick-model', models, current: modelName(session) };
     }
     return this.setModel(selector);
@@ -74,7 +79,8 @@ export class PiSlash implements SlashHost {
     const session = this.target.session();
     if (!session) return toast('Not ready yet.');
     const slash = selector.indexOf('/');
-    const model = slash > 0 ? this.target.runtime.getModel(selector.slice(0, slash), selector.slice(slash + 1)) : undefined;
+    const model =
+      slash > 0 ? this.target.runtime.getModel(selector.slice(0, slash), selector.slice(slash + 1)) : undefined;
     if (!model) return toast(`Unknown model "${selector}". Use provider/model.`);
     await session.setModel(model);
     this.target.onModelChange?.(selector);
@@ -86,5 +92,4 @@ export class PiSlash implements SlashHost {
     await this.target.fresh();
     return toast('New session started', { newSession: true });
   }
-
 }

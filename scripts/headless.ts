@@ -13,7 +13,10 @@ import { FadeApp } from '../src/ui/app.js';
 
 export class FakeTerminal implements Terminal {
   kittyProtocolActive = false;
-  constructor(public columns: number, public rows: number) {}
+  constructor(
+    public columns: number,
+    public rows: number,
+  ) {}
   start(): void {}
   stop(): void {}
   async drainInput(): Promise<void> {}
@@ -47,17 +50,30 @@ function emptyWorkspace(): string {
 }
 
 /** Builds a real Fade with fake agents in the given state, and a FadeApp on a fake terminal. */
-export function createHarness(scenario: Scenario, width: number, height: number, onQuit: () => void = () => undefined): Harness {
+export function createHarness(
+  scenario: Scenario,
+  width: number,
+  height: number,
+  onQuit: () => void = () => undefined,
+): Harness {
   const cwd = scenario === 'empty' ? emptyWorkspace() : createDemoWorkspace();
   if (scenario === 'idle') {
-    writeFileSync(join(cwd, 'PLAN.md'), '# Plan\n\n## [review] Core notes app\nAdd notes.\n\n## [draft] Tags\nTag notes.\n');
+    writeFileSync(
+      join(cwd, 'PLAN.md'),
+      '# Plan\n\n## [review] Core notes app\nAdd notes.\n\n## [draft] Tags\nTag notes.\n',
+    );
   }
-  const fade = assemble(cwd, plan => ({ builder: new FakeBuilder(cwd, { speed: 0.001 }), companion: new FakeCompanion(plan) }));
+  const fade = assemble(cwd, (plan) => ({
+    builder: new FakeBuilder(cwd, { speed: 0.001 }),
+    companion: new FakeCompanion(plan),
+  }));
   if (scenario === 'building') fade.start();
   const tui = new TuiMainScreen(new FakeTerminal(width, height));
-  const app = new FadeApp(tui, fade, new Git(cwd), { cwd, branch: 'main', builderModel: 'demo', companionModel: 'demo' }, onQuit);
+  const app = new FadeApp(tui, fade, new Git(cwd), { cwd, branch: 'main' }, onQuit);
   return {
-    app, fade, cwd,
+    app,
+    fade,
+    cwd,
     render: () => app.render(width),
     dispose: () => {
       app.dispose();

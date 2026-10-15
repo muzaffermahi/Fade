@@ -30,3 +30,9 @@ test('matching normalizes text, supports equal-count index fallback, and exposes
   assert.equal(matched[1]?.passed, true);
   assert.equal(matchChecks(['Tests pass.'], [claim, claim]).length, 1);
 });
+
+test('final pass: executed checks settle a criterion even if the model also supplies a look', () => {
+  const check = { ...claim, proof: 'test', look: 'test output', ran: { code: 0, tail: 'passed', ms: 1 } };
+  assert.equal(verdict(['Tests pass.'], [check]), 'verified');
+  assert.equal(verdict(['Tests pass.'], [{ ...check, ran: { ...check.ran, code: 1 } }]), 'failed');
+});

@@ -59,7 +59,7 @@ export function wordmark(width: number, twinkleSeed?: number): string[] {
   const trailTiles = Math.min(32, Math.max(0, Math.floor(width / 2) - 26));
   return LETTERS[0]!.map((_, row) => {
     const letters = LETTERS.map((letter, i) =>
-      [...letter[row]!].map(ch => (ch === '0' ? '  ' : tile(i < 3 ? IVORY : MINT))).join(''),
+      [...letter[row]!].map((ch) => (ch === '0' ? '  ' : tile(i < 3 ? IVORY : MINT))).join(''),
     ).join('  ');
     const near = NEAR_TRAIL[row]!;
     const trail = [...(near + TRAIL[row]!.slice(near.length))]
@@ -71,7 +71,6 @@ export function wordmark(width: number, twinkleSeed?: number): string[] {
   });
 }
 
-/** One line for headers: "FADE" plus a tiny dissolving trail. */
 export function compactMark(): string {
   return bold(IVORY('FAD')) + bold(MINT('E')) + MINT(' ▪ ▪') + LAVENDER(' ▫  ·');
 }

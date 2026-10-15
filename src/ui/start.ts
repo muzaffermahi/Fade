@@ -5,24 +5,25 @@ import { FadeApp } from './app.js';
 import type { UiMeta } from './screen.js';
 import { Splash } from './splash.js';
 
-
 export async function startUi(fade: Fade, meta: UiMeta): Promise<void> {
   const tui = new TuiMainScreen(new ProcessTerminal());
   const git = new Git(meta.cwd);
   let app: FadeApp | undefined;
   const quit = (): void => {
     app?.dispose();
-    tui.stop();
-    fade.dispose();
-    process.exit(0);
+    void Promise.all([fade.stopBuilder(), fade.stopCompanion()]).finally(() => {
+      tui.stop();
+      fade.dispose();
+      process.exit(0);
+    });
   };
-  tui.addInputListener(data => {
+  tui.addInputListener((data) => {
     if (!matchesKey(data, 'ctrl+c')) return undefined;
     if (app) app.ctrlC();
     else splash.handleInput(data);
     return { consume: true };
   });
-  process.on('uncaughtException', error => {
+  process.on('uncaughtException', (error) => {
     tui.stop();
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);
@@ -42,7 +43,10 @@ export async function startUi(fade: Fade, meta: UiMeta): Promise<void> {
   tui.addChild(splash);
   tui.setFocus(splash);
   tui.start();
-  fade.init().then(() => splash.markReady(), (error: unknown) => {
-    splash.fail(error instanceof Error ? error.message : String(error));
-  });
+  fade.init().then(
+    () => splash.markReady(),
+    (error: unknown) => {
+      splash.fail(error instanceof Error ? error.message : String(error));
+    },
+  );
 }

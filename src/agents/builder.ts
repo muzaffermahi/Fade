@@ -1,24 +1,39 @@
 import { join } from 'node:path';
 import {
-  createAgentSession, defineTool, SessionManager, type AgentSession, type ModelRuntime,
+  createAgentSession,
+  defineTool,
+  SessionManager,
+  type AgentSession,
+  type ModelRuntime,
 } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import type { BuilderAgent, SlashHost, BuilderEvent, BuildOutcome, Card, Step } from '../types.js';
 import { BUILDER_PROMPT, cardMessage } from './prompts.js';
-import {
-  assistantText, describeTool, errorMessage, lastRunError, loader, resolveModel, textDelta,
-} from './pi.js';
+import { describeTool, errorMessage, lastRunError, loader, resolveModel } from './pi.js';
 import { checkTool } from './checks.js';
 import { WEB_TOOLS } from './pi.js';
 import { PiSlash } from './slash.js';
 
 // Local and small models often answer in prose instead of calling tools; then nothing gets built.
-const WEAK_TOOLS = 'The Builder model replied without using any tools, so nothing was built. ' +
-  'Builders need strong tool calling: switch with /model builder (a weaker model can still be a fine Companion).';
+const WEAK_TOOLS =
+  'The Builder model replied without using any tools, so nothing was built. ' +
+  'Choose a model with reliable tool calling using /model builder, then say "continue".';
 
 export const BUILDER_TOOLS = [
-  'read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'fade_steps', 'fade_done', 'fade_stuck',
-  'fade_check', 'tool_search', 'codemode', ...WEB_TOOLS,
+  'read',
+  'bash',
+  'edit',
+  'write',
+  'grep',
+  'find',
+  'ls',
+  'fade_steps',
+  'fade_done',
+  'fade_stuck',
+  'fade_check',
+  'tool_search',
+  'codemode',
+  ...WEB_TOOLS,
 ];
 
 export interface PiBuilderOptions {
@@ -35,7 +50,6 @@ export class PiBuilder implements BuilderAgent {
   private outcome: BuildOutcome | undefined;
   private stopped = false;
   private running = false;
-  private streamed = '';
   private pendingNotes: string[] = [];
   /** Tool calls in the current run; zero means the model only chatted. */
   private toolCalls = 0;
@@ -64,11 +78,10 @@ export class PiBuilder implements BuilderAgent {
     try {
       await this.open(false);
     } catch (error) {
-      throw new Error(`Builder couldn't start: ${errorMessage(error)}`);
+      throw new Error(`Work couldn't start: ${errorMessage(error)}`);
     }
   }
 
-  /** Opens the most recent session, or a brand-new one when `fresh` is set (for /new). */
   private async open(fresh: boolean): Promise<void> {
     const model = this.session?.model ?? resolveModel(this.opts.runtime, this.opts.model);
     const dir = this.sessionDir;
@@ -79,12 +92,14 @@ export class PiBuilder implements BuilderAgent {
       tools: BUILDER_TOOLS,
       customTools: this.customTools(),
       resourceLoader: await loader(this.opts.cwd, BUILDER_PROMPT, true),
-      sessionManager: fresh ? SessionManager.create(this.opts.cwd, dir) : SessionManager.continueRecent(this.opts.cwd, dir),
+      sessionManager: fresh
+        ? SessionManager.create(this.opts.cwd, dir)
+        : SessionManager.continueRecent(this.opts.cwd, dir),
     });
     await session.bindExtensions({});
     this.unsubscribe?.();
     this.session?.dispose();
-    this.unsubscribe = session.subscribe(event => this.onSessionEvent(event));
+    this.unsubscribe = session.subscribe((event) => this.onSessionEvent(event));
     this.session = session;
   }
 
@@ -94,13 +109,15 @@ export class PiBuilder implements BuilderAgent {
       label: 'Steps',
       description: 'Show the human your plan as 3-7 short steps. Call again to update statuses.',
       parameters: Type.Object({
-        steps: Type.Array(Type.Object({
-          text: Type.String(),
-          status: Type.Union([Type.Literal('done'), Type.Literal('active'), Type.Literal('todo')]),
-        })),
+        steps: Type.Array(
+          Type.Object({
+            text: Type.String(),
+            status: Type.Union([Type.Literal('done'), Type.Literal('active'), Type.Literal('todo')]),
+          }),
+        ),
       }),
       execute: async (_id, params) => {
-        const steps: Step[] = params.steps.map(s => ({ text: s.text, status: s.status }));
+        const steps: Step[] = params.steps.map((s) => ({ text: s.text, status: s.status }));
         this.emit({ type: 'steps', steps });
         return { content: [{ type: 'text', text: 'Steps updated.' }], details: undefined };
       },
@@ -113,25 +130,26 @@ export class PiBuilder implements BuilderAgent {
         summary: Type.String({ description: '1-2 plain sentences about what changed.' }),
         howToTry: Type.String({ description: 'One line telling the human how to see it working.' }),
         tryCommand: Type.Optional(Type.String({ description: 'One finite shell command that shows it working.' })),
-        checks: Type.Optional(Type.Array(Type.Object({
-          criterion: Type.String({ description: 'A "Done when" line from the card.' }),
-          passed: Type.Boolean(),
-          proof: Type.Optional(Type.String()),
-          look: Type.Optional(Type.String()),
-          evidence: Type.Optional(Type.String({ description: 'One line: what you ran or saw.' })),
-        }))),
+        checks: Type.Optional(
+          Type.Array(
+            Type.Object({
+              criterion: Type.String({ description: 'A "Done when" line from the card.' }),
+              passed: Type.Boolean(),
+              proof: Type.Optional(Type.String()),
+              look: Type.Optional(Type.String()),
+              evidence: Type.Optional(Type.String({ description: 'One line: what you ran or saw.' })),
+            }),
+          ),
+        ),
       }),
       execute: async (_id, params) => {
-        const outcome: BuildOutcome = { kind: 'done', summary: params.summary, howToTry: params.howToTry };
-        if (params.tryCommand?.trim()) outcome.tryCommand = params.tryCommand.trim();
-        if (params.checks && params.checks.length > 0) {
-          outcome.checks = params.checks.map(check => ({
-            criterion: check.criterion, passed: check.passed,
-            ...(check.proof?.trim() ? { proof: check.proof.trim() } : {}),
-            ...(check.look?.trim() ? { look: check.look.trim() } : {}), ...(check.evidence ? { evidence: check.evidence } : {}),
-          }));
-        }
-        this.outcome = outcome;
+        this.outcome = {
+          kind: 'done',
+          summary: params.summary,
+          howToTry: params.howToTry,
+          ...(params.tryCommand?.trim() ? { tryCommand: params.tryCommand.trim() } : {}),
+          ...(params.checks ? { checks: params.checks } : {}),
+        };
         return { content: [{ type: 'text', text: 'Recorded. Stop now.' }], details: undefined };
       },
     });
@@ -151,23 +169,10 @@ export class PiBuilder implements BuilderAgent {
   private onSessionEvent(event: { type: string } & Record<string, unknown>): void {
     if (!this.running) return;
     this.flushNotes();
-    if (event.type === 'message_update') {
-      const delta = textDelta(event.assistantMessageEvent);
-      if (delta) {
-        this.streamed += delta;
-        this.emit({ type: 'text', text: this.streamed });
-      }
-    } else if (event.type === 'message_end') {
-      const text = assistantText(event.message);
-      this.streamed = '';
-      if (text?.trim()) this.emit({ type: 'message', text });
-    } else if (event.type === 'tool_execution_start') {
+    if (event.type === 'tool_execution_start') {
       this.toolCalls += 1;
       const line = describeTool(this.opts.cwd, String(event.toolName), event.args);
       if (!String(event.toolName).startsWith('fade_')) this.emit({ type: 'action', text: line });
-      this.emit({ type: 'log', line });
-    } else if (event.type === 'tool_execution_end' && event.isError === true) {
-      this.emit({ type: 'log', line: `✗ ${String(event.toolName)} failed` });
     }
   }
 
@@ -177,7 +182,6 @@ export class PiBuilder implements BuilderAgent {
     this.emit = onEvent;
     this.outcome = undefined;
     this.stopped = false;
-    this.streamed = '';
     this.pendingNotes = [];
     this.toolCalls = 0;
     this.running = true;

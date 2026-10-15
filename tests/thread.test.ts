@@ -57,7 +57,7 @@ test('legacy goals stay in PLAN.md without progress or goal-done announcements',
     fade.start();
     await until(() => fade.view().reviews.length === 1);
     fade.accept('Index titles');
-    assert.equal(disk(cwd).goal, 'Legacy intent');
+    assert.match(disk(cwd).preamble, /Goal: Legacy intent/);
     assert.ok(!('progress' in fade.view()));
     assert.ok(!('goalComplete' in fade.view()));
     assert.ok(!fade.view().companion.some(entry => /Goal done:/.test(entry.text)));
@@ -85,9 +85,9 @@ test('Fade proposes a first step without inventing a goal', async () => {
   fade.sendToCompanion('a tiny habit tracker');
   await until(() => fade.view().cards.length === 1 && !fade.view().companionBusy, 'first step');
   const view = fade.view();
-  assert.equal(disk(cwd).goal, '');
+  assert.ok(!('goal' in disk(cwd)));
   assert.equal(view.cards[0]?.state, 'draft');
   assert.ok(!view.companion.some(entry => entry.role === 'goal'));
-  assert.ok(view.companion.some(entry => entry.role === 'card'));
+  assert.ok(view.companion.some(entry => entry.role === 'landed' && /Want it/.test(entry.text)));
   fade.dispose();
 });
