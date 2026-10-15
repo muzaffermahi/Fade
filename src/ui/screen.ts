@@ -2,7 +2,7 @@ import { truncateToWidth, visibleWidth, type Editor } from '@earendil-works/pi-t
 import type { FadeView } from '../view.js';
 import { builderPane } from './builder-pane.js';
 import { CompanionRenderer } from './companion-pane.js';
-import { compactMark } from './logo.js';
+import { compactMark, wordmark } from './logo.js';
 import { bold, c, paintLine, spinnerFrame, spread, underline } from './theme.js';
 import { planLines, stripLines, type Fading } from './strip.js';
 
@@ -12,6 +12,7 @@ export const FOCUS_ORDER: Focus[] = ['builder', 'companion', 'plan'];
 export const MIN_WIDTH = 60;
 export const MIN_ROWS = 15; // render rows (terminal rows - 1) for a 60x16 terminal
 export const WIDE_WIDTH = 100;
+const BANNER_MIN_ROWS = 30;
 
 export interface UiMeta {
   cwd: string;
@@ -37,8 +38,8 @@ export interface ScreenParts {
 }
 
 const HINTS: Record<Focus, string> = {
-  builder: 'tab focus · enter send · esc stop · ctrl+r review · ctrl+l log · ? help',
-  companion: 'tab focus · enter send · esc stop reply · ctrl+r review · ? help',
+  builder: 'tab focus · enter send · esc stop · ctrl+r review · ctrl+l log · / commands · ? help',
+  companion: 'tab focus · enter send · esc stop reply · ctrl+r review · / commands · ? help',
   plan: 'tab focus · space ready · enter open · n new · x drop · ? help',
 };
 
@@ -52,6 +53,13 @@ function header(meta: UiMeta, width: number): string {
   const left = ` ${compactMark()}   ${c.text(folder)}${branch}`;
   const right = c.muted(`builder · ${modelId(meta.builderModel)}   companion · ${modelId(meta.companionModel)} `);
   return spread(left, right, width, visibleWidth);
+}
+
+/** The full wordmark across the top, until the first conversation starts. */
+function banner(view: FadeView, width: number, rows: number): string[] {
+  const empty = view.companion.length === 0 && !view.companionLive;
+  if (!empty || width < 76 || rows < BANNER_MIN_ROWS) return [];
+  return ['', ...wordmark(width - 2).map(line => ` ${line}`), ''];
 }
 
 function tabs(view: FadeView, focus: Focus, now: number): string {
@@ -90,7 +98,8 @@ export function renderScreen(
   const strip = planOpen ? planLines(view, st.selected, st.fading, width, stripHeight(view, rows, st.fading.length), st.now)
     : stripLines(view, st.focus === 'plan', st.fading, width, st.now);
   const stripRows = planOpen ? stripHeight(view, rows, st.fading.length) : 2;
-  const top = wide ? [header(meta, width)] : [header(meta, width), tabs(view, st.focus, st.now)];
+  const heading = wide ? [header(meta, width)] : [header(meta, width), tabs(view, st.focus, st.now)];
+  const top = [...banner(view, width, rows), ...heading];
   // The panes' editors end in their own rule, so only the plan list needs a separate one.
   const closing = !wide && st.focus === 'plan' ? [rule] : [];
   const fixed = top.length + 1 + closing.length + stripRows + 1 + 1;

@@ -49,6 +49,7 @@ const KEYS: [string, string][] = [
   ['alt+↑ ↓  (K J)', 'Plan: move the card'],
   ['x', 'Plan: drop the card'],
   ['a  r  u', 'review: accept · revise · undo'],
+  ['/', 'Pi commands: /model, /thinking, /new, /compact… (type / for all)'],
   ['? or F1', 'this help'],
   ['ctrl+c', 'clear the input; twice to quit'],
 ];
@@ -67,6 +68,25 @@ export class HelpOverlay extends Overlay {
 
   handleInput(data: string): void {
     if (matchesKey(data, 'escape') || matchesKey(data, 'enter') || data === 'q' || data === '?') this.onClose();
+  }
+}
+
+/** Read-only text in a box, e.g. /session. */
+export class InfoOverlay extends Overlay {
+  constructor(
+    rows: () => number, private readonly title: string, private readonly text: string, private readonly onClose: () => void,
+  ) {
+    super(rows);
+  }
+
+  render(width: number): string[] {
+    const lines = sanitize(this.text).split('\n').map(line => c.text(line));
+    lines.push('', c.faint('esc closes'));
+    return box(this.title, lines.slice(0, this.maxInner()), width);
+  }
+
+  handleInput(data: string): void {
+    if (matchesKey(data, 'escape') || matchesKey(data, 'enter') || data === 'q') this.onClose();
   }
 }
 

@@ -1,3 +1,5 @@
+import type { SlashCommand } from '@earendil-works/pi-tui';
+
 export type CardState = 'draft' | 'ready' | 'building' | 'review';
 export interface Card {
   title: string;
@@ -39,8 +41,21 @@ export type CompanionEvent =
   | { type: 'tool'; text: string } // e.g. "reading src/app.ts"
   | { type: 'error'; text: string };
 
+/** What a slash command asks the UI to do next. */
+export type SlashResult =
+  | { kind: 'toast'; text: string; model?: string; newSession?: boolean }
+  | { kind: 'info'; text: string }
+  | { kind: 'prompt'; text: string }; // send the raw text to the agent (skills, prompt templates)
+
+/** Pi's slash commands for one agent's session. */
+export interface SlashHost {
+  commands(): SlashCommand[];
+  run(text: string): Promise<SlashResult>;
+}
+
 export interface BuilderAgent {
   readonly busy: boolean;
+  readonly slash?: SlashHost;
   /** Create the Pi session; throws a human-readable error on failure. */
   init(): Promise<void>;
   build(card: Card, context: string, onEvent: (e: BuilderEvent) => void): Promise<BuildOutcome>;
@@ -59,6 +74,7 @@ export interface PlanApi {
 
 export interface CompanionAgent {
   readonly busy: boolean;
+  readonly slash?: SlashHost;
   init(): Promise<void>;
   send(text: string, context: string, onEvent: (e: CompanionEvent) => void): Promise<void>;
   stop(): Promise<void>;

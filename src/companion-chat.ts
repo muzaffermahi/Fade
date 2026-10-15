@@ -58,6 +58,18 @@ export class CompanionChat {
     this.notify();
   }
 
+  /** Forgets the transcript, for /new. */
+  clear(): void {
+    this.state.data.companion = [];
+    this.live = undefined;
+    try {
+      this.state.save();
+    } catch {
+      // Same as push: not worth interrupting the human.
+    }
+    this.notify();
+  }
+
   stop(): Promise<void> {
     return this.companion.stop();
   }

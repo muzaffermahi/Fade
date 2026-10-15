@@ -167,3 +167,16 @@ test('scrolling up in the Companion pane shows the "↓ new" hint, and sending j
   assert.match(text(h), /↓ new/);
   h.dispose();
 });
+
+test('the wordmark sits across the top until the first conversation starts', () => {
+  const empty = createHarness('empty', 120, 40);
+  const lines = empty.render().map(strip);
+  const header = lines.findIndex(line => line.includes('FADE ▪'));
+  assert.ok(header > 5, 'header sits below the wordmark');
+  assert.ok(lines.slice(0, header).some(line => line.includes('▐█')), 'wordmark is above the header');
+  assert.ok(lines.slice(header).every(line => !line.includes('▐█')), 'no wordmark inside the panes');
+  empty.dispose();
+  const chatting = createHarness('building', 120, 40);
+  assert.ok(chatting.render().map(strip)[0]?.includes('FADE ▪'), 'header is the first line once chatting');
+  chatting.dispose();
+});

@@ -1,7 +1,6 @@
 import { Markdown, type Editor, type MarkdownTheme } from '@earendil-works/pi-tui';
 import type { FadeView } from '../view.js';
 import type { TranscriptEntry } from '../types.js';
-import { wordmark, compactMark } from './logo.js';
 import { editorBlock, paneHeader, viewport, withNewHint, type PaneOptions } from './pane.js';
 import { bold, c, sanitize, underline, wrap } from './theme.js';
 
@@ -68,11 +67,8 @@ export class CompanionRenderer {
     return lines;
   }
 
-  emptyLines(width: number, height: number): string[] {
-    if (width >= 76 && height >= 16) {
-      return ['', ...wordmark(width - 2).map(line => ` ${line}`), '', ` ${c.text('What are we making?')}`];
-    }
-    return ['', ` ${compactMark()}`, '', ` ${c.text('What are we making?')}`];
+  emptyLines(): string[] {
+    return ['', ` ${c.text('What are we making?')}`];
   }
 
   render(view: FadeView, o: PaneOptions, editor: Editor): string[] {
@@ -81,7 +77,7 @@ export class CompanionRenderer {
     const right = view.companionBusy ? c.lavender('thinking…') : '';
     const header = paneHeader('COMPANION', s => bold(c.lavender(s)), o.focused, '', right, o.width);
     const content = view.companion.length === 0 && !view.companionLive
-      ? this.emptyLines(o.width, bodyHeight)
+      ? this.emptyLines()
       : this.transcriptLines(view, o.width);
     const shown = viewport(content, bodyHeight, o.scroll);
     return [header, ...withNewHint(shown.lines, shown.behind, o.width), ...input];

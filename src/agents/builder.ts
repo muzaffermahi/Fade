@@ -3,11 +3,12 @@ import {
   createAgentSession, defineTool, SessionManager, type AgentSession, type ModelRuntime,
 } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
-import type { BuilderAgent, BuilderEvent, BuildOutcome, Card, Step } from '../types.js';
+import type { BuilderAgent, SlashHost, BuilderEvent, BuildOutcome, Card, Step } from '../types.js';
 import { BUILDER_PROMPT, cardMessage } from './prompts.js';
 import {
   assistantText, describeTool, errorMessage, lastRunError, loader, resolveModel, textDelta,
 } from './pi.js';
+import { PiSlash } from './slash.js';
 
 const TOOL_NAMES = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'fade_steps', 'fade_done', 'fade_stuck'];
 
@@ -26,7 +27,16 @@ export class PiBuilder implements BuilderAgent {
   private running = false;
   private streamed = '';
 
-  constructor(private readonly opts: PiBuilderOptions) {}
+  readonly slash: SlashHost;
+
+  constructor(private readonly opts: PiBuilderOptions) {
+    this.slash = new PiSlash({
+      session: () => this.session,
+      runtime: opts.runtime,
+      fresh: () => this.open(true),
+      acceptsPrompts: false,
+    });
+  }
 
   get busy(): boolean {
     return this.running;
@@ -34,22 +44,30 @@ export class PiBuilder implements BuilderAgent {
 
   async init(): Promise<void> {
     try {
-      const model = resolveModel(this.opts.runtime, this.opts.model);
-      const { session } = await createAgentSession({
-        cwd: this.opts.cwd,
-        modelRuntime: this.opts.runtime,
-        ...(model ? { model } : {}),
-        tools: TOOL_NAMES,
-        customTools: this.customTools(),
-        resourceLoader: await loader(this.opts.cwd, BUILDER_PROMPT),
-        sessionManager: SessionManager.continueRecent(this.opts.cwd, join(this.opts.cwd, '.fade', 'sessions', 'builder')),
-      });
-      await session.bindExtensions({});
-      this.unsubscribe = session.subscribe(event => this.onSessionEvent(event));
-      this.session = session;
+      await this.open(false);
     } catch (error) {
       throw new Error(`Builder couldn't start: ${errorMessage(error)}`);
     }
+  }
+
+  /** Opens the most recent session, or a brand-new one when `fresh` is set (for /new). */
+  private async open(fresh: boolean): Promise<void> {
+    const model = this.session?.model ?? resolveModel(this.opts.runtime, this.opts.model);
+    const dir = join(this.opts.cwd, '.fade', 'sessions', 'builder');
+    const { session } = await createAgentSession({
+      cwd: this.opts.cwd,
+      modelRuntime: this.opts.runtime,
+      ...(model ? { model } : {}),
+      tools: TOOL_NAMES,
+      customTools: this.customTools(),
+      resourceLoader: await loader(this.opts.cwd, BUILDER_PROMPT),
+      sessionManager: fresh ? SessionManager.create(this.opts.cwd, dir) : SessionManager.continueRecent(this.opts.cwd, dir),
+    });
+    await session.bindExtensions({});
+    this.unsubscribe?.();
+    this.session?.dispose();
+    this.unsubscribe = session.subscribe(event => this.onSessionEvent(event));
+    this.session = session;
   }
 
   private customTools() {

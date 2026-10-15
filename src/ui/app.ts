@@ -1,11 +1,12 @@
 import {
-  Editor, matchesKey, ProcessTerminal, TuiMainScreen, type Component, type Focusable, type OverlayHandle, type TUI,
+  CombinedAutocompleteProvider, Editor, matchesKey, ProcessTerminal, TuiMainScreen,
+  type Component, type Focusable, type OverlayHandle, type SlashCommand, type TUI,
 } from '@earendil-works/pi-tui';
 import { Git } from '../git.js';
 import type { Fade } from '../loop.js';
 import { CompanionRenderer } from './companion-pane.js';
 import {
-  CardEditorOverlay, ConfirmOverlay, editorTheme, HelpOverlay, ReviewOverlay, TextPromptOverlay,
+  CardEditorOverlay, ConfirmOverlay, editorTheme, HelpOverlay, InfoOverlay, ReviewOverlay, TextPromptOverlay,
 } from './overlays.js';
 import { FOCUS_ORDER, renderScreen, type Focus, type ScreenState, type UiMeta } from './screen.js';
 import { Splash } from './splash.js';
@@ -15,6 +16,13 @@ export type { UiMeta } from './screen.js';
 
 const QUIT_WINDOW_MS = 1000;
 const TOAST_MS = 2500;
+type Pane = 'builder' | 'companion';
+
+/** Commands Fade answers itself, on top of the agent's Pi commands. */
+const APP_COMMANDS: SlashCommand[] = [
+  { name: 'hotkeys', description: 'Show keyboard shortcuts' },
+  { name: 'quit', description: 'Quit Fade' },
+];
 
 export class FadeApp implements Component, Focusable {
   focused = true;
@@ -41,7 +49,17 @@ export class FadeApp implements Component, Focusable {
     this.companionEditor.onSubmit = text => this.send('companion', text);
     this.ticker = setInterval(() => this.tick(), 100);
     this.ticker.unref();
+    this.setupAutocomplete();
     this.syncEditorFocus();
+  }
+
+  /** Typing "/" lists the commands for that pane's agent. */
+  private setupAutocomplete(): void {
+    for (const pane of ['builder', 'companion'] as const) {
+      const commands = [...APP_COMMANDS, ...(this.fade.slashHost(pane)?.commands() ?? [])];
+      const editor = pane === 'builder' ? this.builderEditor : this.companionEditor;
+      editor.setAutocompleteProvider(new CombinedAutocompleteProvider(commands, this.meta.cwd));
+    }
   }
 
   dispose(): void {
@@ -95,6 +113,11 @@ export class FadeApp implements Component, Focusable {
     if (this.overlay) return; // overlays take their own input
     if (matchesKey(data, 'ctrl+c')) return this.ctrlC();
     this.quitArmedAt = 0;
+    const editor = this.editor();
+    if (editor?.isShowingAutocomplete()) {
+      editor.handleInput(data); // tab, enter, esc and arrows belong to the suggestion list
+      return this.tui.requestRender();
+    }
     if (matchesKey(data, 'tab')) return this.cycleFocus(1);
     if (matchesKey(data, 'shift+tab')) return this.cycleFocus(-1);
     if (matchesKey(data, 'ctrl+r')) return this.openFirstReview();
@@ -149,12 +172,35 @@ export class FadeApp implements Component, Focusable {
     this.tui.requestRender();
   }
 
-  private send(which: 'builder' | 'companion', text: string): void {
+  private send(which: Pane, text: string): void {
     if (!text.trim()) return;
+    if (text.trim().startsWith('/')) return void this.slash(which, text.trim());
     this.state.scroll[which] = 0;
     if (which === 'builder') this.fade.sendToBuilder(text);
     else this.fade.sendToCompanion(text);
     this.tui.requestRender();
+  }
+
+  private async slash(which: Pane, text: string): Promise<void> {
+    const name = text.slice(1).split(' ')[0] ?? '';
+    if (name === 'hotkeys' || name === 'help') return this.openHelp();
+    if (name === 'quit') return this.quit();
+    const host = this.fade.slashHost(which);
+    if (!host) return this.toast('Slash commands need a real model; they are off in --demo.');
+    this.toast(`/${name}…`);
+    const result = await host.run(text);
+    if (result.kind === 'prompt') {
+      this.state.scroll.companion = 0;
+      this.fade.sendToCompanion(text);
+    } else if (result.kind === 'info') {
+      this.show(new InfoOverlay(this.rows, `/${name}`, result.text, () => this.close()));
+    } else {
+      if (result.model && which === 'builder') this.meta.builderModel = result.model;
+      if (result.model && which === 'companion') this.meta.companionModel = result.model;
+      if (result.newSession && which === 'companion') this.fade.clearCompanionChat();
+      this.toast(result.text);
+    }
+    this.setupAutocomplete();
   }
 
   private planKey(data: string): void {

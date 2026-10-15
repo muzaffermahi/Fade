@@ -4,11 +4,12 @@ import {
 } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import { serializePlan } from '../plan.js';
-import type { CompanionAgent, CompanionEvent, PlanApi } from '../types.js';
+import type { CompanionAgent, SlashHost, CompanionEvent, PlanApi } from '../types.js';
 import { COMPANION_PROMPT } from './prompts.js';
 import {
   assistantText, describeTool, errorMessage, lastRunError, loader, resolveModel, textDelta,
 } from './pi.js';
+import { PiSlash } from './slash.js';
 
 // Read-only built-ins plus the Fade card tools. No edit, write or bash.
 export const COMPANION_TOOLS = ['read', 'grep', 'find', 'ls', 'fade_add_card', 'fade_edit_card', 'fade_read_plan'];
@@ -27,7 +28,16 @@ export class PiCompanion implements CompanionAgent {
   private running = false;
   private streamed = '';
 
-  constructor(private readonly opts: PiCompanionOptions) {}
+  readonly slash: SlashHost;
+
+  constructor(private readonly opts: PiCompanionOptions) {
+    this.slash = new PiSlash({
+      session: () => this.session,
+      runtime: opts.runtime,
+      fresh: () => this.open(true),
+      acceptsPrompts: true,
+    });
+  }
 
   get busy(): boolean {
     return this.running;
@@ -35,22 +45,30 @@ export class PiCompanion implements CompanionAgent {
 
   async init(): Promise<void> {
     try {
-      const model = resolveModel(this.opts.runtime, this.opts.model);
-      const { session } = await createAgentSession({
-        cwd: this.opts.cwd,
-        modelRuntime: this.opts.runtime,
-        ...(model ? { model } : {}),
-        tools: COMPANION_TOOLS,
-        customTools: this.customTools(),
-        resourceLoader: await loader(this.opts.cwd, COMPANION_PROMPT),
-        sessionManager: SessionManager.continueRecent(this.opts.cwd, join(this.opts.cwd, '.fade', 'sessions', 'companion')),
-      });
-      await session.bindExtensions({});
-      this.unsubscribe = session.subscribe(event => this.onSessionEvent(event));
-      this.session = session;
+      await this.open(false);
     } catch (error) {
       throw new Error(`Companion couldn't start: ${errorMessage(error)}`);
     }
+  }
+
+  /** Opens the most recent session, or a brand-new one when `fresh` is set (for /new). */
+  private async open(fresh: boolean): Promise<void> {
+    const model = this.session?.model ?? resolveModel(this.opts.runtime, this.opts.model);
+    const dir = join(this.opts.cwd, '.fade', 'sessions', 'companion');
+    const { session } = await createAgentSession({
+      cwd: this.opts.cwd,
+      modelRuntime: this.opts.runtime,
+      ...(model ? { model } : {}),
+      tools: COMPANION_TOOLS,
+      customTools: this.customTools(),
+      resourceLoader: await loader(this.opts.cwd, COMPANION_PROMPT),
+      sessionManager: fresh ? SessionManager.create(this.opts.cwd, dir) : SessionManager.continueRecent(this.opts.cwd, dir),
+    });
+    await session.bindExtensions({});
+    this.unsubscribe?.();
+    this.session?.dispose();
+    this.unsubscribe = session.subscribe(event => this.onSessionEvent(event));
+    this.session = session;
   }
 
   private customTools() {
@@ -121,7 +139,8 @@ export class PiCompanion implements CompanionAgent {
   async send(text: string, context: string, onEvent: (e: CompanionEvent) => void): Promise<void> {
     const session = this.session;
     if (!session) throw new Error('Companion is not ready yet.');
-    const message = `<fade-context>\n${context}\n</fade-context>\n\n${text}`;
+    // Slash text goes to Pi untouched so it can expand skills and prompt templates.
+    const message = text.startsWith('/') ? text : `<fade-context>\n${context}\n</fade-context>\n\n${text}`;
     if (this.running) {
       await session.followUp(message);
       return;

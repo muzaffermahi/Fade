@@ -5,7 +5,7 @@ import { formatCompanionContext } from './agents/prompts.js';
 import { CompanionChat } from './companion-chat.js';
 import { applyBuilderEvent, makeReview, titleFromText, Toast, type BuildingView, type FadeView } from './view.js';
 import type {
-  BuilderAgent, BuilderEvent, BuildOutcome, Card, CompanionAgent, DoneEntry, Plan, PlanApi, Review,
+  BuilderAgent, BuilderEvent, BuildOutcome, Card, CompanionAgent, DoneEntry, Plan, PlanApi, Review, SlashHost,
 } from './types.js';
 
 export interface FadeOptions {
@@ -49,7 +49,6 @@ export class Fade implements PlanApi {
     this.plan = this.plans.load();
   }
 
-
   onChange(fn: () => void): () => void {
     this.listeners.add(fn);
     return () => this.listeners.delete(fn);
@@ -77,7 +76,6 @@ export class Fade implements PlanApi {
     return view;
   }
 
-
   /** Starts both agents; throws a human-readable error if either can't start. */
   async init(): Promise<void> {
     await Promise.all([this.builder.init(), this.companion.init()]);
@@ -101,12 +99,11 @@ export class Fade implements PlanApi {
     this.companion.dispose();
   }
 
-
   private savePlan(): void {
     try {
       this.plans.save(this.plan);
     } catch (error) {
-      this.showToast(`Couldn't save PLAN.md: ${messageOf(error)}`);
+      this.toaster.show(`Couldn't save PLAN.md: ${messageOf(error)}`);
     }
   }
 
@@ -116,10 +113,6 @@ export class Fade implements PlanApi {
     } catch {
       // Losing review/transcript history is not worth interrupting the human.
     }
-  }
-
-  private showToast(text: string): void {
-    this.toaster.show(text);
   }
 
   private reloadExternal(): void {
@@ -157,7 +150,6 @@ export class Fade implements PlanApi {
     if (index < 0) return undefined;
     return reviews.splice(index, 1)[0];
   }
-
 
   tick(): void {
     if (this.disposed || this.starting || this.building || this.builder.busy) return;
@@ -253,7 +245,6 @@ export class Fade implements PlanApi {
     this.moveToTop(card);
   }
 
-
   toggleReady(title: string): void {
     const card = this.find(title);
     if (!card) return;
@@ -332,7 +323,7 @@ export class Fade implements PlanApi {
     this.state.data.shipped.count += 1;
     this.savePlan();
     this.saveState();
-    this.showToast('Shipped ✓');
+    this.toaster.show('Shipped ✓');
   }
 
   revise(title: string, note: string): void {
@@ -382,7 +373,7 @@ export class Fade implements PlanApi {
 
   async stopBuilder(): Promise<void> {
     if (!this.building) return;
-    this.showToast('Stopping…');
+    this.toaster.show('Stopping…');
     await this.builder.stop();
   }
 
@@ -392,6 +383,14 @@ export class Fade implements PlanApi {
 
   stopCompanion(): Promise<void> {
     return this.chat.stop();
+  }
+
+  slashHost(which: 'builder' | 'companion'): SlashHost | undefined {
+    return which === 'builder' ? this.builder.slash : this.companion.slash;
+  }
+
+  clearCompanionChat(): void {
+    this.chat.clear();
   }
 }
 
