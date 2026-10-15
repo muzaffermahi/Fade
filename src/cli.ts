@@ -1,27 +1,28 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, realpathSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { realpathSync } from 'node:fs';
 import { createInterface } from 'node:readline/promises';
-import { fileURLToPath } from 'node:url';
 import { FakeBuilder, FakeCompanion } from './agents/fake.js';
 import { PiBuilder } from './agents/builder.js';
 import { PiCompanion } from './agents/companion.js';
-import { createRuntime } from './agents/pi.js';
+import { createRuntime, piCliPath } from './agents/pi.js';
+import { readConfig, saveModelChoice } from './config.js';
 import { createDemoWorkspace } from './demo.js';
 import { Git } from './git.js';
 import { assemble } from './assemble.js';
-import { startUi } from './ui/app.js';
+import { startUi } from './ui/start.js';
 
-const VERSION = '0.1.0';
-const HELP = `Fade: plan the next thing while AI builds this one.
+const VERSION = '0.2.0';
+const HELP = `Fade: get your flow back. You navigate, AI drives.
 
   fade                      run in the current directory
-  fade --demo               try the UI in a temp folder with fake agents (no API calls)
-  fade login                connect a model provider (uses Pi)
-  fade --builder <p/m>      Builder model, e.g. anthropic/claude-sonnet-4-5
-  fade --companion <p/m>    Companion model
+  fade --demo               try it in a temp folder with fake agents (no API calls, no key)
+  fade login                connect a model provider
+  fade --builder <p/m>      Builder model (provider/model-id)
+  fade --companion <p/m>    Companion model, e.g. a local one: ollama/<model>
   fade --help | --version
+
+Inside Fade, /model in either pane switches that agent's model and remembers it.
 `;
 
 interface Args {
@@ -48,19 +49,12 @@ function parseArgs(argv: string[]): Args {
 }
 
 function login(): never {
-  console.log('Type /login, pick a provider, then /quit.');
-  let cliPath: string | undefined;
-  try {
-    const entry = fileURLToPath(import.meta.resolve('@earendil-works/pi-coding-agent'));
-    const candidate = join(dirname(entry), '..', 'bundle', 'cli.js');
-    if (existsSync(candidate)) cliPath = candidate;
-  } catch {
-    cliPath = undefined;
-  }
+  const cliPath = piCliPath();
   if (!cliPath) {
-    console.log('Could not find Pi here. Run: npx @earendil-works/pi-coding-agent');
+    console.log('Could not find the login tool. Run: npx @earendil-works/pi-coding-agent, then /login there.');
     process.exit(1);
   }
+  console.log('Type /login, pick a provider, then /quit to come back.');
   const result = spawnSync(process.execPath, [cliPath], { stdio: 'inherit' });
   process.exit(result.status ?? 0);
 }
@@ -70,24 +64,6 @@ async function ask(question: string): Promise<boolean> {
   const answer = (await rl.question(question)).trim().toLowerCase();
   rl.close();
   return answer === '' || answer.startsWith('y');
-}
-
-interface Config {
-  builder?: string;
-  companion?: string;
-}
-
-function readConfig(cwd: string): Config {
-  try {
-    const raw: unknown = JSON.parse(readFileSync(join(cwd, '.fade', 'config.json'), 'utf8'));
-    if (typeof raw !== 'object' || raw === null) return {};
-    const config: Config = {};
-    if ('builder' in raw && typeof raw.builder === 'string') config.builder = raw.builder;
-    if ('companion' in raw && typeof raw.companion === 'string') config.companion = raw.companion;
-    return config;
-  } catch {
-    return {};
-  }
 }
 
 async function main(): Promise<void> {
@@ -123,8 +99,14 @@ async function main(): Promise<void> {
   const builderModel = args.builder ?? config.builder;
   const companionModel = args.companion ?? config.companion;
   const fade = assemble(cwd, plan => ({
-    builder: new PiBuilder({ cwd, runtime, ...(builderModel ? { model: builderModel } : {}) }),
-    companion: new PiCompanion({ cwd, runtime, plan, ...(companionModel ? { model: companionModel } : {}) }),
+    builder: new PiBuilder({
+      cwd, runtime, ...(builderModel ? { model: builderModel } : {}),
+      onModelChange: selector => saveModelChoice(cwd, 'builder', selector),
+    }),
+    companion: new PiCompanion({
+      cwd, runtime, plan, ...(companionModel ? { model: companionModel } : {}),
+      onModelChange: selector => saveModelChoice(cwd, 'companion', selector),
+    }),
   }));
   await startUi(fade, {
     cwd, branch: git.branch(), builderModel: builderModel ?? 'default', companionModel: companionModel ?? 'default',

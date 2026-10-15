@@ -1,60 +1,72 @@
 import {
-  CombinedAutocompleteProvider, Editor, matchesKey, ProcessTerminal, TuiMainScreen,
-  type Component, type Focusable, type OverlayHandle, type SlashCommand, type TUI,
+  CombinedAutocompleteProvider, Editor, matchesKey, type Component, type Focusable, type OverlayHandle, type TUI,
 } from '@earendil-works/pi-tui';
-import { Git } from '../git.js';
+import { piCliPath } from '../agents/pi.js';
+import { nextItem, type NextItem } from '../flow.js';
+import type { Git } from '../git.js';
 import type { Fade } from '../loop.js';
+import type { FadeView } from '../view.js';
+import { Attention, QUIET_MS, windowTitle } from './attention.js';
+import { APP_COMMANDS, runSlash, type CommandHost } from './commands.js';
+import { CardActions, handlePlanKey, type PlanKeyHost } from './card-actions.js';
 import { CompanionRenderer } from './companion-pane.js';
+import { runPi, runTryCommand } from './handoff.js';
 import {
-  CardEditorOverlay, ConfirmOverlay, editorTheme, HelpOverlay, InfoOverlay, ReviewOverlay, TextPromptOverlay,
+  editorTheme, HelpOverlay, RecapOverlay, TextPromptOverlay,
 } from './overlays.js';
 import { FOCUS_ORDER, renderScreen, type Focus, type ScreenState, type UiMeta } from './screen.js';
-import { Splash } from './splash.js';
+import { recapInput } from './recap.js';
 import { FADE_MS } from './strip.js';
 
 export type { UiMeta } from './screen.js';
+
 
 const QUIT_WINDOW_MS = 1000;
 const TOAST_MS = 2500;
 type Pane = 'builder' | 'companion';
 
-/** Commands Fade answers itself, on top of the agent's Pi commands. */
-const APP_COMMANDS: SlashCommand[] = [
-  { name: 'hotkeys', description: 'Show keyboard shortcuts' },
-  { name: 'quit', description: 'Quit Fade' },
-];
-
-export class FadeApp implements Component, Focusable {
+export class FadeApp implements Component, Focusable, CommandHost, PlanKeyHost {
   focused = true;
   private state: ScreenState = {
     focus: 'companion', scroll: { builder: 0, companion: 0 }, selected: 0, rawLog: false, fading: [],
-    toast: undefined, now: Date.now(),
+    toast: undefined, now: Date.now(), next: { kind: 'calm' }, nextKey: '⏎',
   };
   private readonly builderEditor: Editor;
   private readonly companionEditor: Editor;
   private readonly renderer = new CompanionRenderer();
+  private readonly attention: Attention;
+  readonly cards: CardActions;
   private overlay: OverlayHandle | undefined;
   private quitArmedAt = 0;
   private toastTimer: NodeJS.Timeout | undefined;
   private fadeTimer: NodeJS.Timeout | undefined;
+  private quietTimer: NodeJS.Timeout | undefined;
   private readonly ticker: NodeJS.Timeout;
+  private title = '';
+  private closedGoal = '';
+  /** While another program owns the terminal, Fade stops drawing. */
+  private suspended = false;
 
   constructor(
-    private readonly tui: TUI, private readonly fade: Fade, private readonly git: Git,
-    private readonly meta: UiMeta, private readonly quit: () => void,
+    readonly tui: TUI, readonly fade: Fade, git: Git,
+    readonly meta: UiMeta, readonly quit: () => void,
   ) {
     this.builderEditor = new Editor(tui, editorTheme(), { paddingX: 1 });
     this.companionEditor = new Editor(tui, editorTheme(), { paddingX: 1 });
     this.builderEditor.onSubmit = text => this.send('builder', text);
     this.companionEditor.onSubmit = text => this.send('companion', text);
-    this.ticker = setInterval(() => this.tick(), 100);
+    this.attention = new Attention(item => this.signal(item));
+    this.cards = new CardActions(this, git);
+    this.ticker = setInterval(() => {
+      if (this.fade.animating) this.requestRender();
+    }, 100);
     this.ticker.unref();
-    this.setupAutocomplete();
+    this.refreshCommands();
     this.syncEditorFocus();
   }
 
-  /** Typing "/" lists the commands for that pane's agent. */
-  private setupAutocomplete(): void {
+  /** Typing "/" lists Fade's commands plus that pane's agent commands. */
+  refreshCommands(): void {
     for (const pane of ['builder', 'companion'] as const) {
       const commands = [...APP_COMMANDS, ...(this.fade.slashHost(pane)?.commands() ?? [])];
       const editor = pane === 'builder' ? this.builderEditor : this.companionEditor;
@@ -64,25 +76,57 @@ export class FadeApp implements Component, Focusable {
 
   dispose(): void {
     clearInterval(this.ticker);
-    if (this.toastTimer) clearTimeout(this.toastTimer);
+    for (const timer of [this.toastTimer, this.quietTimer]) if (timer) clearTimeout(timer);
     if (this.fadeTimer) clearInterval(this.fadeTimer);
   }
 
   invalidate(): void {}
 
+  requestRender(force = false): void {
+    if (!this.suspended) this.tui.requestRender(force);
+  }
+
   // ---- rendering ----
 
-  private tick(): void {
-    const view = this.fade.view();
-    if (view.building || view.companionBusy) this.tui.requestRender();
+  private editorText(): string {
+    return this.editor()?.getText() ?? '';
+  }
+
+  private candidate(view: FadeView): NextItem {
+    return nextItem({
+      cards: view.cards, reviews: view.reviews, building: view.building !== null,
+      runwayMs: view.runwayMs, ...(view.freshDraft ? { freshDraft: view.freshDraft } : {}),
+    });
   }
 
   render(width: number): string[] {
-    this.state.now = Date.now();
+    const now = Date.now();
+    this.state.now = now;
+    const view = this.fade.view(now);
+    const quiet = this.attention.quiet(this.editorText().trim() !== '', now);
+    this.state.next = this.attention.resolve(this.candidate(view), view, quiet);
+    this.state.nextKey = this.editor() && this.editorText() === '' ? '⏎' : 'ctrl+r';
+    this.updateTitle(view);
+    if (view.goalComplete && view.goalComplete.goal !== this.closedGoal && !quiet && !this.overlay) {
+      setImmediate(() => this.openClosure());
+    }
     const rows = Math.max(1, this.tui.terminal.rows - 1);
-    return renderScreen(this.fade.view(), this.state, {
+    return renderScreen(view, this.state, {
       builderEditor: this.builderEditor, companionEditor: this.companionEditor, companion: this.renderer,
     }, this.meta, width, rows);
+  }
+
+  private updateTitle(view: FadeView): void {
+    const folder = this.meta.cwd.split(/[\\/]/).filter(Boolean).pop() ?? 'Fade';
+    const title = windowTitle(view, this.state.next, folder);
+    if (title === this.title) return;
+    this.title = title;
+    this.tui.terminal.setTitle(title);
+  }
+
+  /** Something new needs you, and you're at a breakpoint: a quiet bell (if on). The title already changed. */
+  private signal(item: NextItem): void {
+    if (this.fade.view().bell && item.kind !== 'calm') this.tui.terminal.write('\x07');
   }
 
   private syncEditorFocus(): void {
@@ -93,15 +137,15 @@ export class FadeApp implements Component, Focusable {
 
   private refresh(): void {
     this.syncEditorFocus();
-    this.tui.requestRender();
+    this.requestRender();
   }
 
-  private toast(text: string): void {
+  toast(text: string): void {
     this.state.toast = text;
     if (this.toastTimer) clearTimeout(this.toastTimer);
     this.toastTimer = setTimeout(() => {
       this.state.toast = undefined;
-      this.tui.requestRender();
+      this.requestRender();
     }, TOAST_MS);
     this.toastTimer.unref();
     this.refresh();
@@ -110,24 +154,34 @@ export class FadeApp implements Component, Focusable {
   // ---- input ----
 
   handleInput(data: string): void {
-    if (this.overlay) return; // overlays take their own input
+    if (this.overlay || this.suspended) return; // overlays take their own input
+    this.noteKeystroke();
     if (matchesKey(data, 'ctrl+c')) return this.ctrlC();
     this.quitArmedAt = 0;
     const editor = this.editor();
     if (editor?.isShowingAutocomplete()) {
       editor.handleInput(data); // tab, enter, esc and arrows belong to the suggestion list
-      return this.tui.requestRender();
+      return this.requestRender();
     }
     if (matchesKey(data, 'tab')) return this.cycleFocus(1);
     if (matchesKey(data, 'shift+tab')) return this.cycleFocus(-1);
-    if (matchesKey(data, 'ctrl+r')) return this.openFirstReview();
+    if (matchesKey(data, 'ctrl+r')) return this.doNext();
+    if (matchesKey(data, 'ctrl+n')) return this.parkThought();
     if (matchesKey(data, 'ctrl+l')) {
       this.state.rawLog = !this.state.rawLog;
       return this.refresh();
     }
     if (matchesKey(data, 'f1')) return this.openHelp();
-    if (this.state.focus === 'plan') return this.planKey(data);
+    if (this.state.focus === 'plan') return handlePlanKey(this, data);
     this.paneKey(data);
+  }
+
+  /** Typing holds new things back; once you pause, let them through. */
+  private noteKeystroke(): void {
+    this.attention.keystroke();
+    if (this.quietTimer) clearTimeout(this.quietTimer);
+    this.quietTimer = setTimeout(() => this.requestRender(), QUIET_MS + 50);
+    this.quietTimer.unref();
   }
 
   private editor(): Editor | undefined {
@@ -156,84 +210,67 @@ export class FadeApp implements Component, Focusable {
     const focus = this.state.focus;
     const editor = this.editor();
     if (!editor || (focus !== 'builder' && focus !== 'companion')) return;
-    if (data === '?' && editor.getText() === '') return this.openHelp();
+    const empty = editor.getText() === '';
+    if (data === '?' && empty) return this.openHelp();
+    if (matchesKey(data, 'enter') && empty) return this.doNext();
     if (matchesKey(data, 'escape')) {
-      if (focus === 'builder') {
-        void this.fade.stopBuilder();
-      } else {
-        void this.fade.stopCompanion();
-      }
+      if (focus === 'builder') void this.fade.stopBuilder();
+      else void this.fade.stopCompanion();
       return;
     }
     const page = Math.max(3, this.tui.terminal.rows - 12);
     if (matchesKey(data, 'pageUp')) this.state.scroll[focus] += page;
     else if (matchesKey(data, 'pageDown')) this.state.scroll[focus] = Math.max(0, this.state.scroll[focus] - page);
     else editor.handleInput(data);
-    this.tui.requestRender();
+    this.requestRender();
   }
 
   private send(which: Pane, text: string): void {
     if (!text.trim()) return;
-    if (text.trim().startsWith('/')) return void this.slash(which, text.trim());
+    if (text.trim().startsWith('/')) return void runSlash(this, which, text.trim());
     this.state.scroll[which] = 0;
     if (which === 'builder') this.fade.sendToBuilder(text);
     else this.fade.sendToCompanion(text);
-    this.tui.requestRender();
+    this.requestRender();
   }
 
-  private async slash(which: Pane, text: string): Promise<void> {
-    const name = text.slice(1).split(' ')[0] ?? '';
-    if (name === 'hotkeys' || name === 'help') return this.openHelp();
-    if (name === 'quit') return this.quit();
-    const host = this.fade.slashHost(which);
-    if (!host) return this.toast('Slash commands need a real model; they are off in --demo.');
-    this.toast(`/${name}…`);
-    const result = await host.run(text);
-    if (result.kind === 'prompt') {
-      this.state.scroll.companion = 0;
-      this.fade.sendToCompanion(text);
-    } else if (result.kind === 'info') {
-      this.show(new InfoOverlay(this.rows, `/${name}`, result.text, () => this.close()));
-    } else {
-      if (result.model && which === 'builder') this.meta.builderModel = result.model;
-      if (result.model && which === 'companion') this.meta.companionModel = result.model;
-      if (result.newSession && which === 'companion') this.fade.clearCompanionChat();
-      this.toast(result.text);
+  /** The one key that matters: act on whatever is next. Pressing it is itself a breakpoint, so resolve fresh. */
+  doNext(): void {
+    const view = this.fade.view();
+    const item = this.attention.resolve(this.candidate(view), view, false);
+    this.state.next = item;
+    switch (item.kind) {
+      case 'stuck':
+      case 'review':
+        return this.cards.review(item.review.title);
+      case 'fresh':
+        return this.readyStep(item.title);
+      case 'idle':
+      case 'low':
+        if (item.draft) return this.readyStep(item.draft);
+        this.setFocus('companion');
+        return this.toast('Tell the Companion what the next step is');
+      case 'calm':
+        return this.toast(this.fade.view().building ? 'Nothing needs you. Think ahead.' : 'Nothing needs you.');
     }
-    this.setupAutocomplete();
   }
 
-  private planKey(data: string): void {
-    const cards = this.fade.view().cards;
-    const count = cards.length;
-    this.state.selected = Math.max(0, Math.min(count - 1, this.state.selected));
-    const card = cards[this.state.selected];
-    if (matchesKey(data, 'alt+up') || data === 'K') return this.moveCard(-1);
-    if (matchesKey(data, 'alt+down') || data === 'J') return this.moveCard(1);
-    if (matchesKey(data, 'up') || data === 'k') this.state.selected = Math.max(0, this.state.selected - 1);
-    else if (matchesKey(data, 'down') || data === 'j') this.state.selected = Math.min(count - 1, this.state.selected + 1);
-    else if (data === 'n') return this.newCard();
-    else if (data === '?') return this.openHelp();
-    else if (!card) return;
-    else if (matchesKey(data, 'space')) this.fade.toggleReady(card.title);
-    else if (matchesKey(data, 'enter')) this.openCard(card.title);
-    else if (data === 'x') this.confirmDrop(card.title);
-    else if (card.state === 'review' && data === 'a') this.accept(card.title);
-    else if (card.state === 'review' && data === 'r') this.askRevise(card.title);
-    else if (card.state === 'review' && data === 'u') this.confirmUndo(card.title);
-    this.tui.requestRender();
+  private readyStep(title: string): void {
+    this.fade.toggleReady(title);
+    this.toast(`Ready ✓  ${title}`);
   }
 
-  private moveCard(direction: -1 | 1): void {
-    const card = this.fade.view().cards[this.state.selected];
-    if (!card) return;
-    this.fade.move(card.title, direction);
-    this.state.selected += direction;
+  private parkThought(): void {
+    this.show(new TextPromptOverlay(this.tui, 'Park a thought for later', text => {
+      this.close();
+      this.fade.park(text);
+      this.toast('Parked in Later. Back to the thread.');
+    }, () => this.close()));
   }
 
   // ---- actions ----
 
-  private accept(title: string): void {
+  accept(title: string): void {
     const index = this.fade.view().cards.findIndex(card => card.title === title);
     this.state.fading.push({ title, start: Date.now(), index });
     this.fade.accept(title);
@@ -249,140 +286,101 @@ export class FadeApp implements Component, Focusable {
         clearInterval(this.fadeTimer);
         this.fadeTimer = undefined;
       }
-      this.tui.requestRender();
+      this.requestRender();
     }, 50);
     this.fadeTimer.unref();
   }
 
-  // ---- overlays ----
-
-  private show(component: Component): void {
-    this.overlay = this.tui.showOverlay(component, { width: '80%', maxHeight: '80%', anchor: 'center' });
-    this.syncEditorFocus();
-    this.tui.requestRender();
+  /** Lends the terminal to Pi's own screen for `command`, on one agent's session, then takes it back. */
+  async handoffPi(command: string, args: string[], reopen: () => Promise<void>, who: string): Promise<void> {
+    const cli = piCliPath();
+    if (!cli) return this.toast('Pi is not installed alongside Fade; run `npx @earendil-works/pi-coding-agent`.');
+    await this.lendTerminal(async () => {
+      await runPi(cli, args, this.meta.cwd, `opened Pi on the ${who}'s session. Type /${command} there, then /quit to come back.`);
+      await reopen().catch(() => undefined);
+    });
+    this.refreshCommands();
+    this.toast(`Back from Pi /${command}`);
   }
 
-  private close(): void {
-    this.overlay?.hide();
+  tryIt(title: string): void {
+    const review = this.fade.view().reviews.find(r => r.title === title);
+    const command = review?.tryCommand;
+    if (!command) return this.toast(review?.howToTry ? `Try it: ${review.howToTry}` : 'No try command for this step.');
+    void this.lendTerminal(() => runTryCommand(command, this.meta.cwd).then(() => undefined));
+  }
+
+  private async lendTerminal(work: () => Promise<void>): Promise<void> {
+    this.close();
+    this.suspended = true;
+    this.tui.stop();
+    try {
+      await work();
+    } finally {
+      this.suspended = false;
+      this.tui.start();
+      this.tui.setFocus(this);
+      this.requestRender(true);
+    }
+  }
+
+  // ---- overlays ----
+
+  show(component: Component): void {
+    this.overlay = this.tui.showOverlay(component, { width: '80%', maxHeight: '80%', anchor: 'center' });
+    this.syncEditorFocus();
+    this.requestRender();
+  }
+
+  close(): void {
+    if (!this.overlay) return;
+    this.overlay.hide();
     this.overlay = undefined;
     this.tui.setFocus(this);
     this.refresh();
   }
 
-  private rows = (): number => this.tui.terminal.rows;
+  rows = (): number => this.tui.terminal.rows;
 
-  private openHelp(): void {
+  openHelp(): void {
     this.show(new HelpOverlay(this.rows, () => this.close()));
   }
 
-  private openFirstReview(): void {
+  openFirstReview(): void {
     const first = this.fade.view().reviews[0];
-    if (first) this.openReview(first.title);
+    if (first) this.cards.review(first.title);
     else this.toast('Nothing to review yet');
   }
 
-  private openCard(title: string): void {
-    const card = this.fade.view().cards.find(c => c.title === title);
-    if (!card) return;
-    if (card.state === 'review') return this.openReview(title);
-    if (card.state === 'building') return this.toast('The Builder is on this one');
-    this.show(new CardEditorOverlay(this.tui, card, (newTitle, body) => {
-      this.fade.editCard(title, { title: newTitle, body });
-      this.close();
-    }, () => this.close()));
-  }
-
-  private openReview(title: string): void {
+  openRecap(): void {
     const view = this.fade.view();
-    const review = view.reviews.find(r => r.title === title)
-      ?? { title, summary: 'Ready for a look.', howToTry: '', files: [], finishedAt: Date.now() };
-    const diff = review.sha ? this.git.show(review.sha) : '';
-    this.show(new ReviewOverlay(this.rows, review, diff, {
-      accept: () => {
-        this.close();
-        this.accept(title);
-      },
-      revise: () => {
-        this.close();
-        this.askRevise(title);
-      },
-      undo: () => {
-        this.close();
-        this.confirmUndo(title);
-      },
-      close: () => this.close(),
-    }));
+    this.show(new RecapOverlay(this.rows, recapInput(view, 'This session'), '⏎ or esc closes', () => this.close(), () => this.close()));
   }
 
-  private askRevise(title: string): void {
-    const stuck = this.fade.view().reviews.find(r => r.title === title)?.question;
-    this.show(new TextPromptOverlay(this.tui, stuck ? 'Your answer' : 'What should change?', note => {
+  /** The goal is done: a moment of closure, then a clean start on the next thread. */
+  private openClosure(): void {
+    const done = this.fade.view().goalComplete;
+    if (!done || this.overlay || done.goal === this.closedGoal) return;
+    this.closedGoal = done.goal;
+    const input = { title: 'Goal complete', goal: done.goal, shipped: done.steps, startedAt: done.startedAt };
+    this.show(new RecapOverlay(this.rows, input, '⏎ start the next goal · esc keep looking', () => {
       this.close();
-      this.fade.revise(title, note);
+      this.fade.finishGoal();
+      this.setFocus('companion');
+      this.toast('What is the next goal?');
     }, () => this.close()));
   }
 
-  private confirmUndo(title: string): void {
-    this.show(new ConfirmOverlay(this.rows, `Undo "${title}"? Fade will queue a card to revert it.`, () => {
-      this.close();
-      this.fade.undo(title);
-    }, () => this.close()));
+  get selected(): number {
+    return this.state.selected;
   }
 
-  private confirmDrop(title: string): void {
-    this.show(new ConfirmOverlay(this.rows, `Drop "${title}"?`, () => {
-      this.close();
-      this.fade.drop(title);
-    }, () => this.close()));
-  }
-
-  private newCard(): void {
-    this.show(new TextPromptOverlay(this.tui, 'New card title', title => {
-      this.close();
-      this.show(new CardEditorOverlay(this.tui, { title, body: '' }, (finalTitle, body) => {
-        this.fade.addCard(finalTitle, body);
-        this.close();
-      }, () => this.close()));
-    }, () => this.close()));
+  set selected(index: number) {
+    this.state.selected = index;
   }
 
   setFocus(focus: Focus): void {
     this.state.focus = focus;
     this.refresh();
   }
-}
-
-export async function startUi(fade: Fade, meta: UiMeta): Promise<void> {
-  const tui = new TuiMainScreen(new ProcessTerminal());
-  const git = new Git(meta.cwd);
-  let app: FadeApp | undefined;
-  const quit = (): void => {
-    app?.dispose();
-    tui.stop();
-    fade.dispose();
-    process.exit(0);
-  };
-  process.on('uncaughtException', error => {
-    tui.stop();
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exit(1);
-  });
-
-  const enter = (): void => {
-    splash.dispose();
-    tui.removeChild(splash);
-    fade.start();
-    app = new FadeApp(tui, fade, git, meta, quit);
-    tui.addChild(app);
-    tui.setFocus(app);
-    fade.onChange(() => tui.requestRender());
-    tui.requestRender();
-  };
-  const splash = new Splash(tui, enter, quit);
-  tui.addChild(splash);
-  tui.setFocus(splash);
-  tui.start();
-  fade.init().then(() => splash.markReady(), (error: unknown) => {
-    splash.fail(error instanceof Error ? error.message : String(error));
-  });
 }

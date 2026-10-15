@@ -12,13 +12,17 @@ import {
 import { PiSlash } from './slash.js';
 
 // Read-only built-ins plus the Fade card tools. No edit, write or bash.
-export const COMPANION_TOOLS = ['read', 'grep', 'find', 'ls', 'fade_add_card', 'fade_edit_card', 'fade_read_plan'];
+export const COMPANION_TOOLS = [
+  'read', 'grep', 'find', 'ls',
+  'fade_add_card', 'fade_edit_card', 'fade_read_plan', 'fade_set_goal', 'fade_park', 'fade_promote_later',
+];
 
 export interface PiCompanionOptions {
   cwd: string;
   runtime: ModelRuntime;
   plan: PlanApi;
   model?: string;
+  onModelChange?: (selector: string) => void;
 }
 
 export class PiCompanion implements CompanionAgent {
@@ -34,9 +38,16 @@ export class PiCompanion implements CompanionAgent {
     this.slash = new PiSlash({
       session: () => this.session,
       runtime: opts.runtime,
+      sessionDir: this.sessionDir,
       fresh: () => this.open(true),
+      reopen: () => this.open(false),
+      ...(opts.onModelChange ? { onModelChange: opts.onModelChange } : {}),
       acceptsPrompts: true,
     });
+  }
+
+  private get sessionDir(): string {
+    return join(this.opts.cwd, '.fade', 'sessions', 'companion');
   }
 
   get busy(): boolean {
@@ -54,7 +65,7 @@ export class PiCompanion implements CompanionAgent {
   /** Opens the most recent session, or a brand-new one when `fresh` is set (for /new). */
   private async open(fresh: boolean): Promise<void> {
     const model = this.session?.model ?? resolveModel(this.opts.runtime, this.opts.model);
-    const dir = join(this.opts.cwd, '.fade', 'sessions', 'companion');
+    const dir = this.sessionDir;
     const { session } = await createAgentSession({
       cwd: this.opts.cwd,
       modelRuntime: this.opts.runtime,
@@ -108,14 +119,53 @@ export class PiCompanion implements CompanionAgent {
     const readTool = defineTool({
       name: 'fade_read_plan',
       label: 'Read plan',
-      description: 'Return the current PLAN.md.',
+      description: 'Return the current PLAN.md: the goal, the cards, and the parked Later items.',
       parameters: Type.Object({}),
       execute: async () => {
-        const text = serializePlan({ preamble: '# Plan\n', cards: plan.list(), done: [] });
+        const text = serializePlan({ preamble: '# Plan\n', goal: plan.goal(), cards: plan.list(), later: plan.later(), done: [] });
         return { content: [{ type: 'text', text }], details: undefined };
       },
     });
-    return [addTool, editTool, readTool];
+    return [addTool, editTool, readTool, ...this.threadTools()];
+  }
+
+  /** Tools that keep the human on one thread: name the goal, park tangents, bring a parked idea back. */
+  private threadTools() {
+    const plan = this.opts.plan;
+    const goalTool = defineTool({
+      name: 'fade_set_goal',
+      label: 'Set goal',
+      description: 'Record the one goal the human is working toward right now, as one short line.',
+      parameters: Type.Object({ goal: Type.String() }),
+      execute: async (_id, params) => {
+        plan.setGoal(params.goal);
+        this.emit({ type: 'goal', text: params.goal.trim() });
+        return { content: [{ type: 'text', text: 'Goal recorded.' }], details: undefined };
+      },
+    });
+    const parkTool = defineTool({
+      name: 'fade_park',
+      label: 'Park for later',
+      description: 'Save an idea that does not belong to the current goal into the Later list (one line).',
+      parameters: Type.Object({ idea: Type.String() }),
+      execute: async (_id, params) => {
+        plan.park(params.idea);
+        this.emit({ type: 'parked', text: params.idea.trim() });
+        return { content: [{ type: 'text', text: 'Parked in Later.' }], details: undefined };
+      },
+    });
+    const promoteTool = defineTool({
+      name: 'fade_promote_later',
+      label: 'Promote from Later',
+      description: 'Turn a parked Later item into a draft card for the current goal.',
+      parameters: Type.Object({ item: Type.String(), title: Type.String(), body: Type.String() }),
+      execute: async (_id, params) => {
+        const title = plan.promote(params.item, params.title, params.body);
+        this.emit({ type: 'card', title, action: 'added' });
+        return { content: [{ type: 'text', text: `Added draft card "${title}".` }], details: undefined };
+      },
+    });
+    return [goalTool, parkTool, promoteTool];
   }
 
   private onSessionEvent(event: { type: string } & Record<string, unknown>): void {

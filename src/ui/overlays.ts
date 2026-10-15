@@ -1,19 +1,14 @@
 import {
-  Editor, matchesKey, truncateToWidth, visibleWidth, type Component, type Focusable, type TUI,
+  Editor, matchesKey, SelectList, type Component, type Focusable, type TUI,
 } from '@earendil-works/pi-tui';
-import { compactMark } from './logo.js';
-import { bold, c, keepColorsOnly, paintLine, sanitize, wrap } from './theme.js';
+import type { FileChange } from '../git.js';
 import type { Review } from '../types.js';
+import { box } from './box.js';
+import { compactMark } from './logo.js';
+import { recapLines, type RecapInput } from './recap.js';
+import { bold, c, keepColorsOnly, sanitize, wrap } from './theme.js';
 
-/** A rounded faint box with a mint title. `inner` lines are already styled. */
-export function box(title: string, inner: string[], width: number): string[] {
-  const edge = c.faint;
-  const room = Math.max(4, width - 4);
-  const label = ` ${bold(c.mint(title))} `;
-  const top = `${edge('╭─')}${label}${edge('─'.repeat(Math.max(0, width - 3 - visibleWidth(label)) ) + '╮')}`;
-  const rows = inner.map(line => `${edge('│')} ${truncateToWidth(line, room, '…', true)} ${edge('│')}`);
-  return [top, ...rows, edge(`╰${'─'.repeat(Math.max(0, width - 2))}╯`)].map(line => paintLine(line, width));
-}
+export { box } from './box.js';
 
 export function editorTheme() {
   const id = (s: string): string => s;
@@ -36,20 +31,22 @@ abstract class Overlay implements Component {
 // ---- help ----
 
 const KEYS: [string, string][] = [
+  ['⏎ on empty line', 'do the NEXT thing: look at what landed, ready a step, answer'],
+  ['ctrl+r', 'the same, from anywhere'],
+  ['ctrl+n', 'park a thought in Later without leaving the thread'],
   ['tab / shift+tab', 'move focus: Builder → Companion → Plan'],
-  ['enter', 'send what you typed (Builder or Companion)'],
-  ['esc', 'stop the Builder card / the Companion reply'],
-  ['ctrl+r', 'open the first card waiting for review'],
+  ['⏎', 'send what you typed (Builder or Companion)'],
+  ['esc', 'stop the Builder step / the Companion reply'],
   ['ctrl+l', 'raw Builder log'],
   ['pgup / pgdn', 'scroll the focused pane'],
-  ['↑ ↓  (k j)', 'Plan: select a card'],
-  ['space', 'Plan: mark a card ready / back to draft'],
-  ['enter', 'Plan: open a card (review or edit)'],
-  ['n', 'Plan: new card'],
-  ['alt+↑ ↓  (K J)', 'Plan: move the card'],
-  ['x', 'Plan: drop the card'],
-  ['a  r  u', 'review: accept · revise · undo'],
-  ['/', 'Pi commands: /model, /thinking, /new, /compact… (type / for all)'],
+  ['↑ ↓  (k j)', 'Plan: select a step'],
+  ['space', 'Plan: ready a step / back to draft'],
+  ['⏎', 'Plan: open a step (review or edit)'],
+  ['n', 'Plan: new step'],
+  ['alt+↑ ↓  (K J)', 'Plan: move the step'],
+  ['x', 'Plan: drop the step'],
+  ['a  r  u  t', 'review: accept · revise · undo · try it'],
+  ['/', 'commands: /model, /goal, /later, /recap, /tree, /login… (type / for all)'],
   ['? or F1', 'this help'],
   ['ctrl+c', 'clear the input; twice to quit'],
 ];
@@ -60,9 +57,9 @@ export class HelpOverlay extends Overlay {
   }
 
   render(width: number): string[] {
-    const lines = [compactMark(), ''];
-    for (const [key, what] of KEYS) lines.push(`${c.mint(key.padEnd(16))} ${c.text(what)}`);
-    lines.push('', c.faint('Only you mark cards ready. Git is the undo button. esc closes.'));
+    const lines = [compactMark(), '', c.muted('One goal. One next thing. You navigate, the Builder drives.'), ''];
+    for (const [key, what] of KEYS) lines.push(`${c.mint(key.padEnd(17))} ${c.text(what)}`);
+    lines.push('', c.faint('Only you ready steps. Git is the undo button. esc closes.'));
     return box('Keys', lines.slice(0, this.maxInner()), width);
   }
 
@@ -90,59 +87,157 @@ export class InfoOverlay extends Overlay {
   }
 }
 
-// ---- review ----
+// ---- review: feedback first, diff second ----
 
 export interface ReviewActions {
   accept: () => void;
   revise: () => void;
   undo: () => void;
+  /** Present only when the Builder left a command that shows the work. */
+  tryIt?: () => void;
   close: () => void;
 }
 
 export class ReviewOverlay extends Overlay {
   private scroll = 0;
+  private showDiff = false;
   private readonly diff: string[];
 
-  constructor(rows: () => number, private readonly review: Review, diffText: string, private readonly actions: ReviewActions) {
+  constructor(
+    rows: () => number, private readonly review: Review, private readonly changes: FileChange[],
+    diffText: string, private readonly actions: ReviewActions,
+  ) {
     super(rows);
     this.diff = keepColorsOnly(diffText).split('\n');
   }
 
-  private head(width: number): string[] {
-    const inner = width - 4;
-    const lines = [bold(c.text(sanitize(this.review.title))), ...wrap(this.review.summary, inner).map(l => c.text(l))];
-    if (this.review.question) {
-      lines.push('', ...wrap(`Question: ${this.review.question}`, inner).map(l => c.lavender(l)));
-    } else if (this.review.howToTry) {
-      lines.push('', ...wrap(`Try it: ${this.review.howToTry}`, inner).map(l => c.mint(l)));
+  /** "Done when" lines with the Builder's own verdict, or marked unchecked. */
+  private checkLines(inner: number): string[] {
+    const checks = this.review.checks ?? [];
+    const criteria = this.review.doneWhen ?? [];
+    if (checks.length === 0 && criteria.length === 0) return [];
+    const lines = [c.muted('Done when')];
+    const rows = checks.length > 0 ? checks : criteria.map(criterion => ({ criterion, passed: false, evidence: undefined }));
+    for (const row of rows) {
+      const mark = checks.length === 0 ? c.faint('·') : row.passed ? c.mint('✓') : c.rose('✗');
+      const evidence = row.evidence ? c.faint(`  ${sanitize(row.evidence)}`) : checks.length === 0 ? c.faint('  not checked by the Builder') : '';
+      lines.push(...wrap(`${row.criterion}`, inner - 4).map((line, i) => (i === 0 ? ` ${mark} ${c.text(line)}${evidence}` : `   ${c.text(line)}`)));
     }
+    return [...lines, ''];
+  }
+
+  private fileLines(): string[] {
+    if (this.changes.length === 0) {
+      return this.review.files.length > 0 ? [`${c.muted('Changed')}  ${c.text(this.review.files.join(' · '))}`] : [];
+    }
+    const items = this.changes.map(ch => `${c.text(ch.file)} ${c.mint(`+${ch.added}`)} ${c.rose(`−${ch.removed}`)}`);
+    return [`${c.muted('Changed')}  ${items.join(c.faint(' · '))}`];
+  }
+
+  private body(width: number): string[] {
+    const inner = width - 4;
+    const r = this.review;
+    const lines = [bold(c.text(sanitize(r.title))), ...wrap(r.summary, inner).map(l => c.text(l)), ''];
+    if (r.question) {
+      lines.push(...wrap(`Question: ${r.question}`, inner).map(l => c.lavender(l)), '');
+    }
+    lines.push(...this.checkLines(inner));
+    if (r.howToTry) lines.push(...wrap(`Try it: ${r.howToTry}`, inner).map(l => c.mint(l)));
+    if (r.tryCommand) lines.push(`${c.text('t')} ${c.muted(`runs: ${sanitize(r.tryCommand)}`)}`);
+    if (r.howToTry || r.tryCommand) lines.push('');
+    lines.push(...this.fileLines());
+    if (!r.sha) lines.push(c.faint('No changes were committed for this step.'));
+    else if (this.showDiff) lines.push('', ...this.diff);
+    else lines.push(c.faint('d shows the full diff'));
     return lines;
   }
 
-  private diffHeight(headLines: number): number {
-    return Math.max(2, this.maxInner() - headLines - 3);
+  private footer(): string {
+    const keys = this.review.question
+      ? ['r answer', 'u undo', 'a accept anyway']
+      : ['a accept', 'r revise', 'u undo', ...(this.actions.tryIt ? ['t try it'] : []), 'd diff'];
+    return c.muted(`${keys.join(' · ')} · esc close`);
   }
 
   render(width: number): string[] {
-    const head = this.head(width);
-    const height = this.diffHeight(head.length);
-    this.scroll = Math.min(this.scroll, Math.max(0, this.diff.length - height));
-    const slice = this.diff.slice(this.scroll, this.scroll + height);
-    const body = this.review.sha ? slice : [c.faint('No changes were committed for this card.')];
-    const footer = c.muted('a accept · r revise · u undo · ↑↓ scroll · esc close');
-    return box('Review', [...head, '', ...body, '', footer], width);
+    const body = this.body(width);
+    const height = Math.max(3, this.maxInner() - 2);
+    this.scroll = Math.min(this.scroll, Math.max(0, body.length - height));
+    return box('Review', [...body.slice(this.scroll, this.scroll + height), '', this.footer()], width);
   }
 
   handleInput(data: string): void {
-    const page = this.diffHeight(this.head(60).length);
+    const page = Math.max(3, this.maxInner() - 4);
     if (matchesKey(data, 'escape')) this.actions.close();
     else if (data === 'a') this.actions.accept();
     else if (data === 'r') this.actions.revise();
     else if (data === 'u') this.actions.undo();
+    else if (data === 't' && this.actions.tryIt) this.actions.tryIt();
+    else if (data === 'd' && this.review.sha) this.showDiff = !this.showDiff;
     else if (matchesKey(data, 'down') || data === 'j') this.scroll += 1;
     else if (matchesKey(data, 'up') || data === 'k') this.scroll = Math.max(0, this.scroll - 1);
     else if (matchesKey(data, 'pageDown')) this.scroll += page;
     else if (matchesKey(data, 'pageUp')) this.scroll = Math.max(0, this.scroll - page);
+  }
+}
+
+// ---- recap and goal closure ----
+
+export class RecapOverlay extends Overlay {
+  constructor(
+    rows: () => number, private readonly input: RecapInput, private readonly footer: string,
+    private readonly onEnter: () => void, private readonly onClose: () => void,
+  ) {
+    super(rows);
+  }
+
+  render(width: number): string[] {
+    return recapLines({ ...this.input, footer: this.footer }, width);
+  }
+
+  handleInput(data: string): void {
+    if (matchesKey(data, 'enter')) this.onEnter();
+    else if (matchesKey(data, 'escape') || data === 'q') this.onClose();
+  }
+}
+
+// ---- model picker ----
+
+export class ModelPickerOverlay extends Overlay {
+  private readonly list: SelectList;
+  private filter = '';
+
+  constructor(
+    rows: () => number, private readonly role: string, models: string[], current: string,
+    onPick: (selector: string) => void, private readonly onClose: () => void,
+  ) {
+    super(rows);
+    this.list = new SelectList(models.map(m => ({ value: m, label: m === current ? `${m}  (current)` : m })), 10, editorTheme().selectList);
+    const index = models.indexOf(current);
+    if (index >= 0) this.list.setSelectedIndex(index);
+    this.list.onSelect = item => onPick(item.value);
+    this.list.onCancel = () => onClose();
+  }
+
+  render(width: number): string[] {
+    const filter = this.filter ? c.text(this.filter) : c.faint('type to filter');
+    const lines = [`${c.muted('Filter')} ${filter}`, '', ...this.list.render(width - 4), '', c.muted('⏎ choose · esc cancel')];
+    return box(`${this.role} model`, lines.slice(0, this.maxInner()), width);
+  }
+
+  handleInput(data: string): void {
+    if (matchesKey(data, 'escape')) return this.onClose();
+    if (matchesKey(data, 'backspace')) {
+      this.filter = this.filter.slice(0, -1);
+      this.list.setFilter(this.filter);
+      return;
+    }
+    if (data.length === 1 && data >= ' ' && data !== '\x7f') {
+      this.filter += data;
+      this.list.setFilter(this.filter);
+      return;
+    }
+    this.list.handleInput(data);
   }
 }
 
@@ -167,7 +262,7 @@ export class CardEditorOverlay extends Overlay implements Focusable {
     this.editor.focused = this.focused;
     const lines = this.editor.render(width - 4).slice(0, this.maxInner() - 2);
     const footer = c.muted('ctrl+s save · esc cancel · alt+enter newline');
-    return box('Card', [c.faint('First line is the title; the rest is the body.'), ...lines, footer], width);
+    return box('Step', [c.faint('First line is the title; the rest is the body. End with "Done when: …".'), ...lines, footer], width);
   }
 
   handleInput(data: string): void {
@@ -199,7 +294,7 @@ export class TextPromptOverlay extends Overlay implements Focusable {
 
   render(width: number): string[] {
     this.editor.focused = this.focused;
-    return box(this.question, [...this.editor.render(width - 4), c.muted('enter ok · esc cancel')], width);
+    return box(this.question, [...this.editor.render(width - 4), c.muted('⏎ ok · esc cancel')], width);
   }
 
   handleInput(data: string): void {

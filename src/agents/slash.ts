@@ -3,17 +3,37 @@ import type { AutocompleteItem, SlashCommand } from '@earendil-works/pi-tui';
 import type { SlashHost, SlashResult } from '../types.js';
 import { errorMessage } from './pi.js';
 
-/** Pi commands that need Pi's own screens (pickers, trees, menus). */
-const PI_ONLY = new Set([
-  'settings', 'tree', 'scoped-models', 'export', 'import', 'share', 'bug', 'name', 'changelog',
-  'fork', 'clone', 'trust', 'logout', 'resume',
-]);
+/**
+ * Pi commands that need Pi's own screens (pickers, trees, menus, logins).
+ * Fade hands the terminal to Pi on this agent's session and takes it back when you /quit.
+ */
+const HANDOFF: Record<string, string> = {
+  login: 'Connect a model provider',
+  logout: 'Remove a provider login',
+  settings: 'Pi settings',
+  'scoped-models': 'Choose models for cycling',
+  tree: 'Browse and branch this session',
+  resume: 'Switch to another session',
+  fork: 'Fork this session',
+  clone: 'Duplicate this session',
+  import: 'Import a session file',
+  share: 'Share this session',
+  trust: 'Project trust settings',
+  changelog: "Pi's changelog",
+  bug: 'Report a Pi bug',
+};
 
 export interface SlashTarget {
   session(): AgentSession | undefined;
   runtime: ModelRuntime;
+  /** Where this agent keeps its sessions, so Pi's /resume and /tree see the same ones. */
+  sessionDir: string;
   /** Replace the agent's session with a brand-new one. */
   fresh(): Promise<void>;
+  /** Reload the agent's latest session from disk, after Pi changed it. */
+  reopen(): Promise<void>;
+  /** Called after a successful model switch, so the choice sticks next time. */
+  onModelChange?(selector: string): void;
   /** Whether skills and prompt templates can be sent to this agent as a message. */
   acceptsPrompts: boolean;
 }
@@ -40,7 +60,7 @@ export class PiSlash implements SlashHost {
     const session = this.target.session();
     const builtIn: SlashCommand[] = [
       {
-        name: 'model', description: 'Switch model', argumentHint: '<provider/model>',
+        name: 'model', description: 'Switch model (no argument opens a picker)', argumentHint: '[provider/model]',
         getArgumentCompletions: async prefix => {
           const models = await this.target.runtime.getAvailable();
           return matching(models.map(m => `${m.provider}/${m.id}`), prefix);
@@ -53,9 +73,11 @@ export class PiSlash implements SlashHost {
       { name: 'new', description: 'Start a new session' },
       { name: 'compact', description: 'Compact the session context', argumentHint: '[instructions]' },
       { name: 'session', description: 'Show session info and stats' },
+      { name: 'name', description: 'Name this session', argumentHint: '<name>' },
+      { name: 'export', description: 'Export this session to HTML' },
       { name: 'copy', description: 'Copy the last reply to the clipboard' },
       { name: 'reload', description: 'Reload extensions, skills, prompts and context files' },
-      { name: 'login', description: 'Connect a model provider' },
+      ...Object.entries(HANDOFF).map(([name, description]) => ({ name, description: `${description} (opens Pi)` })),
     ];
     if (!session) return builtIn;
     const extensions = session.extensionRunner.getRegisteredCommands().map(cmd => ({
@@ -91,13 +113,14 @@ export class PiSlash implements SlashHost {
       case 'new': return this.fresh(session);
       case 'compact': return this.compact(session, args);
       case 'session': return { kind: 'info', text: sessionInfo(session) };
+      case 'name': return this.name(session, args);
+      case 'export': return toast(`Exported to ${await session.exportToHtml()}`);
       case 'copy': return this.copy(session);
       case 'reload':
         await session.reload();
         return toast('Reloaded');
-      case 'login': return toast('Quit Fade (Ctrl+C twice) and run `fade login` to connect a provider.');
     }
-    if (PI_ONLY.has(name)) return toast(`/${name} needs Pi's own screen. Run \`pi\` in a terminal for that.`);
+    if (name in HANDOFF) return this.handoff(session, name);
     if (session.extensionRunner.getCommand(name)) {
       await session.prompt(text);
       return toast(`Ran /${name}`);
@@ -112,12 +135,29 @@ export class PiSlash implements SlashHost {
     return toast(`Unknown command /${name}. Type / to see the list.`);
   }
 
+  private handoff(session: AgentSession, name: string): SlashResult {
+    if (session.isStreaming) return toast(`Still working. Press Esc first, then /${name}.`);
+    const file = session.sessionManager.getSessionFile();
+    const args = ['--session-dir', this.target.sessionDir, ...(file ? ['--session', file] : [])];
+    return { kind: 'handoff', command: name, args, reopen: () => this.target.reopen() };
+  }
+
   private async model(session: AgentSession, selector: string): Promise<SlashResult> {
-    if (!selector) return toast(`Model: ${modelName(session)}. Type /model and a name to switch.`);
+    if (!selector) {
+      const models = (await this.target.runtime.getAvailable()).map(m => `${m.provider}/${m.id}`);
+      return { kind: 'pick-model', models, current: modelName(session) };
+    }
+    return this.setModel(selector);
+  }
+
+  async setModel(selector: string): Promise<SlashResult> {
+    const session = this.target.session();
+    if (!session) return toast('Not ready yet.');
     const slash = selector.indexOf('/');
     const model = slash > 0 ? this.target.runtime.getModel(selector.slice(0, slash), selector.slice(slash + 1)) : undefined;
     if (!model) return toast(`Unknown model "${selector}". Use provider/model.`);
     await session.setModel(model);
+    this.target.onModelChange?.(selector);
     return toast(`Model: ${selector}`, { model: selector });
   }
 
@@ -140,6 +180,12 @@ export class PiSlash implements SlashHost {
     if (session.isStreaming) return toast('Still working. Press Esc first, then /compact.');
     await session.compact(instructions || undefined);
     return toast('Session compacted');
+  }
+
+  private name(session: AgentSession, name: string): SlashResult {
+    if (!name) return toast('Type /name and the new name.');
+    session.setSessionName(name);
+    return toast(`Session named "${name}"`);
   }
 
   private async copy(session: AgentSession): Promise<SlashResult> {

@@ -1,7 +1,7 @@
 {
   "name": "@muzaffermahi/fade",
-  "version": "0.1.0",
-  "description": "Plan the next thing while AI builds this one.",
+  "version": "0.2.0",
+  "description": "Get your flow back. You navigate, AI drives.",
   "type": "module",
   "bin": { "fade": "dist/cli.js" },
   "engines": { "node": ">=22.19" },
@@ -11,7 +11,8 @@
     "demo": "tsx src/cli.ts --demo",
     "test": "node --import tsx --test tests/*.test.ts",
     "check": "tsc --noEmit -p tsconfig.test.json",
-    "snapshot": "tsx scripts/snapshot.ts"
+    "snapshot": "tsx scripts/snapshot.ts",
+    "perf": "tsx scripts/perf.ts"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "1.0.4",

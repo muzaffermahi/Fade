@@ -9,6 +9,8 @@ export interface PaneOptions {
   /** Lines scrolled up from the bottom; 0 follows the newest content. */
   scroll: number;
   now: number;
+  /** The pane may show the big wordmark in its empty state (when there's no banner above). */
+  showMark?: boolean;
 }
 
 /** The editor's own lines, with the cursor hidden when unfocused and a placeholder when empty. */

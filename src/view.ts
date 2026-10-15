@@ -1,3 +1,4 @@
+import { doneWhenLines } from './plan.js';
 import type { BuilderEvent, BuildOutcome, Card, DoneEntry, Review, Step, TranscriptEntry } from './types.js';
 
 export interface BuildingView {
@@ -10,8 +11,25 @@ export interface BuildingView {
   notes: string[];
 }
 
+/** What this run of Fade has done so far: the raw material for the recap card. */
+export interface SessionStats {
+  startedAt: number;
+  shipped: string[];
+  commits: number;
+  /** Time the Builder sat with nothing to do, after the first card started. */
+  idleMs: number;
+}
+
+export interface GoalComplete {
+  goal: string;
+  steps: string[];
+  startedAt: number;
+}
+
 export interface FadeView {
+  goal: string;
   cards: Card[];
+  later: string[];
   done: DoneEntry[];
   reviews: Review[];
   building: BuildingView | null;
@@ -21,6 +39,16 @@ export interface FadeView {
   companionLive?: string;
   companionBusy: boolean;
   shippedToday: number;
+  /** Steps finished under the current goal, and steps in it overall. */
+  progress: { done: number; total: number };
+  /** Estimated think-time before the Builder runs out of ready work. */
+  runwayMs: number;
+  /** A draft the Companion just proposed and you haven't readied or moved past yet. */
+  freshDraft?: string;
+  /** Set once every step of the goal has shipped, until you start the next goal. */
+  goalComplete?: GoalComplete;
+  session: SessionStats;
+  bell: boolean;
   toast?: string;
 }
 
@@ -68,14 +96,18 @@ export class Toast {
 }
 
 /** The review record for a card the Builder finished (or got stuck on). */
-export function makeReview(title: string, outcome: BuildOutcome, saved: { sha?: string; files: string[] }): Review {
+export function makeReview(card: Card, outcome: BuildOutcome, saved: { sha?: string; files: string[] }): Review {
   const review: Review = {
-    title,
+    title: card.title,
     summary: outcome.kind === 'done' ? outcome.summary : 'The Builder needs your answer.',
     howToTry: outcome.kind === 'done' ? outcome.howToTry : '',
     files: saved.files,
     finishedAt: Date.now(),
   };
+  const doneWhen = doneWhenLines(card.body);
+  if (doneWhen.length > 0) review.doneWhen = doneWhen;
+  if (outcome.kind === 'done' && outcome.tryCommand?.trim()) review.tryCommand = outcome.tryCommand.trim();
+  if (outcome.kind === 'done' && outcome.checks && outcome.checks.length > 0) review.checks = outcome.checks;
   if (outcome.kind === 'stuck') review.question = outcome.question;
   if (saved.sha) review.sha = saved.sha;
   return review;

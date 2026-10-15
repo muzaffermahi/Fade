@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { FakeBuilder, FakeCompanion } from '../src/agents/fake.js';
+import { companionPlanApi } from '../src/assemble.js';
 import { Git } from '../src/git.js';
 import { COMPANION_TOOLS } from '../src/agents/companion.js';
 import { formatCompanionContext } from '../src/agents/prompts.js';
@@ -32,11 +33,10 @@ function makeFade(cwd: string, builder?: FakeBuilder): Fade {
   const git = new Git(cwd);
   git.excludeFade();
   const fadeRef: { current?: Fade } = {};
-  const api = {
-    list: () => fadeRef.current?.list() ?? [],
-    addCard: (t: string, b: string) => fadeRef.current?.addCard(t, b) ?? t,
-    editCard: (t: string, p: { title?: string; body?: string }) => fadeRef.current?.editCard(t, p),
-  };
+  const api = companionPlanApi(() => {
+    if (!fadeRef.current) throw new Error('not ready');
+    return fadeRef.current;
+  });
   const fade = new Fade({
     cwd, plans, state, git,
     builder: builder ?? new FakeBuilder(cwd, { speed: 100000 }),

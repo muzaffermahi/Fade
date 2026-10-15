@@ -27,27 +27,41 @@ export function createDemoWorkspace(): string {
 
   new PlanStore(cwd).save({
     preamble: '# Plan\n',
+    goal: 'A notes app I would actually use every day',
     cards: [
-      { title: 'Core notes app', state: 'review', body: 'Add, edit and delete notes.\nDone when: a note survives a reload.' },
-      { title: 'Search', state: 'ready', body: 'Search notes by title and body as you type.\nDone when: typing "gro" shows "Groceries".' },
-      { title: 'Export to markdown', state: 'ready', body: 'One .md file per note in ./export.' },
-      { title: 'Notebook styling', state: 'draft', body: 'Warm paper, roomy margins, one column.' },
-      { title: 'Tags', state: 'draft', body: 'Tag a note and filter by tag.' },
+      {
+        title: 'Core notes app', state: 'review',
+        body: 'Add, edit and delete notes, saved to disk.\nDone when: a note survives a reload.',
+      },
+      {
+        title: 'Search', state: 'ready',
+        body: 'Search notes by title and body as you type.\nDone when: typing "gro" shows "Groceries".',
+      },
+      { title: 'Notebook styling', state: 'draft', body: 'Warm paper, roomy margins, one column.\nDone when: it reads like a page.' },
     ],
+    later: ['Export to markdown', 'Tags'],
     done: [{ title: 'Project setup' }],
   });
   const state = new StateStore(cwd);
+  state.data.goalShipped = ['Project setup'];
   state.data.reviews.push({
     title: 'Core notes app',
     summary: 'Notes can be added, edited and deleted, and they are saved to disk.',
     howToTry: 'Open src/store.txt, then reload the app: your notes are still there.',
+    tryCommand: `node -e "process.stdout.write(require('fs').readFileSync('src/store.txt','utf8'))"`,
+    doneWhen: ['a note survives a reload.'],
+    checks: [{ criterion: 'a note survives a reload.', passed: true, evidence: 'wrote a note, reloaded, read it back' }],
     sha,
     files: ['src/store.txt'],
     finishedAt: Date.now(),
   });
   state.data.companion.push(
     { role: 'you', text: 'Could it feel more like a notebook?' },
-    { role: 'companion', text: 'Yes: warm paper, roomy margins, quiet controls. Want that as a card?' },
+    { role: 'companion', text: 'Yes: warm paper, roomy margins, quiet controls. That is a step for after search lands.' },
+    { role: 'card', text: 'Notebook styling' },
+    { role: 'you', text: 'oh and export to markdown at some point, later' },
+    { role: 'companion', text: 'Parked it in Later so it does not pull us off the goal.' },
+    { role: 'parked', text: 'Export to markdown' },
   );
   state.save();
   return cwd;

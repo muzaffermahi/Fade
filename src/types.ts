@@ -12,7 +12,11 @@ export interface DoneEntry {
 }
 export interface Plan {
   preamble: string;
+  /** The one thread everything serves right now ("Goal: …" in PLAN.md). Empty when unset. */
+  goal: string;
   cards: Card[];
+  /** Parked one-liners that don't belong to the current goal ("## Later"). */
+  later: string[];
   done: DoneEntry[];
 }
 
@@ -21,8 +25,15 @@ export interface Step {
   status: 'done' | 'active' | 'todo';
 }
 
+/** The Builder's own verdict on one "Done when" line. */
+export interface Check {
+  criterion: string;
+  passed: boolean;
+  evidence?: string;
+}
+
 export type BuildOutcome =
-  | { kind: 'done'; summary: string; howToTry: string }
+  | { kind: 'done'; summary: string; howToTry: string; tryCommand?: string; checks?: Check[] }
   | { kind: 'stuck'; question: string }
   | { kind: 'stopped' }
   | { kind: 'failed'; error: string };
@@ -38,6 +49,8 @@ export type CompanionEvent =
   | { type: 'text'; text: string } // full streamed text of the current reply
   | { type: 'message'; text: string } // final reply
   | { type: 'card'; title: string; action: 'added' | 'edited' }
+  | { type: 'goal'; text: string }
+  | { type: 'parked'; text: string }
   | { type: 'tool'; text: string } // e.g. "reading src/app.ts"
   | { type: 'error'; text: string };
 
@@ -45,12 +58,17 @@ export type CompanionEvent =
 export type SlashResult =
   | { kind: 'toast'; text: string; model?: string; newSession?: boolean }
   | { kind: 'info'; text: string }
-  | { kind: 'prompt'; text: string }; // send the raw text to the agent (skills, prompt templates)
+  | { kind: 'prompt'; text: string } // send the raw text to the agent (skills, prompt templates)
+  | { kind: 'pick-model'; models: string[]; current: string }
+  /** Open Pi's own screen on this agent's session; `reopen` reloads the session afterwards. */
+  | { kind: 'handoff'; command: string; args: string[]; reopen: () => Promise<void> };
 
 /** Pi's slash commands for one agent's session. */
 export interface SlashHost {
   commands(): SlashCommand[];
   run(text: string): Promise<SlashResult>;
+  /** Switches this agent's model; used by the /model picker. */
+  setModel(selector: string): Promise<SlashResult>;
 }
 
 export interface BuilderAgent {
@@ -70,6 +88,12 @@ export interface PlanApi {
   /** Returns the final unique title. */
   addCard(title: string, body: string): string;
   editCard(title: string, patch: { title?: string; body?: string }): void;
+  goal(): string;
+  setGoal(text: string): void;
+  later(): string[];
+  park(text: string): void;
+  /** Turns a parked Later item into a draft card; returns the card's title. */
+  promote(item: string, title: string, body: string): string;
 }
 
 export interface CompanionAgent {
@@ -85,6 +109,12 @@ export interface Review {
   title: string;
   summary: string;
   howToTry: string;
+  /** A finite command that shows the work, run with `t`. */
+  tryCommand?: string;
+  /** The card's "Done when" lines, as written when it was built. */
+  doneWhen?: string[];
+  /** The Builder's verdict on each "Done when" line. */
+  checks?: Check[];
   /** Set when the Builder got stuck. */
   question?: string;
   /** Checkpoint commit, if one was made. */
@@ -95,6 +125,6 @@ export interface Review {
 }
 
 export interface TranscriptEntry {
-  role: 'you' | 'companion' | 'card' | 'tool' | 'error';
+  role: 'you' | 'companion' | 'card' | 'goal' | 'parked' | 'tool' | 'error';
   text: string;
 }

@@ -9,6 +9,20 @@ export interface Agents {
   companion: CompanionAgent;
 }
 
+/** The Companion's view of the plan. Cards it writes become the "ready it?" suggestion. */
+export function companionPlanApi(need: () => Fade): PlanApi {
+  return {
+    list: () => need().list(),
+    addCard: (title, body) => need().proposeCard(title, body),
+    editCard: (title, patch) => need().editCard(title, patch, true),
+    goal: () => need().model.plan.goal,
+    setGoal: text => need().setGoal(text),
+    later: () => [...need().model.plan.later],
+    park: text => need().park(text),
+    promote: (item, title, body) => need().promote(item, title, body),
+  };
+}
+
 export function assemble(cwd: string, makeAgents: (plan: PlanApi) => Agents): Fade {
   const holder: { fade?: Fade } = {};
   const need = (): Fade => {
@@ -16,12 +30,7 @@ export function assemble(cwd: string, makeAgents: (plan: PlanApi) => Agents): Fa
     return holder.fade;
   };
   // The Companion needs the plan before Fade exists, so it talks to Fade through this forwarder.
-  const planApi: PlanApi = {
-    list: () => need().list(),
-    addCard: (title, body) => need().addCard(title, body),
-    editCard: (title, patch) => need().editCard(title, patch),
-  };
-  const { builder, companion } = makeAgents(planApi);
+  const { builder, companion } = makeAgents(companionPlanApi(need));
   holder.fade = new Fade({ cwd, plans: new PlanStore(cwd), state: new StateStore(cwd), git: new Git(cwd), builder, companion });
   return holder.fade;
 }

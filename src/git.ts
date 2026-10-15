@@ -3,6 +3,11 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 export type CheckpointResult = { sha: string; files: string[] } | { error: string };
+export interface FileChange {
+  file: string;
+  added: number;
+  removed: number;
+}
 
 export class Git {
   constructor(readonly cwd: string) {}
@@ -64,6 +69,18 @@ export class Git {
       const stderr = error instanceof Error && 'stderr' in error ? String(error.stderr) : '';
       const first = stderr.split('\n').find(line => line.trim()) ?? (error instanceof Error ? error.message : 'commit failed');
       return { error: first.trim() };
+    }
+  }
+
+  /** Lines added and removed per file in a commit. Binary files report 0/0. */
+  numstat(sha: string): FileChange[] {
+    try {
+      return this.run(['show', '--numstat', '--format=', sha]).split('\n').filter(Boolean).map(line => {
+        const [added = '0', removed = '0', ...path] = line.split('\t');
+        return { file: path.join('\t'), added: Number(added) || 0, removed: Number(removed) || 0 };
+      });
+    } catch {
+      return [];
     }
   }
 

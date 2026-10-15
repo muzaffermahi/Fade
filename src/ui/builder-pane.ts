@@ -50,12 +50,15 @@ function idleLines(view: FadeView, width: number): string[] {
   const hasReady = view.cards.some(card => card.state === 'ready');
   const say = (text: string): string[] => wrap(text, width - 2).map(line => ` ${c.muted(line)}`);
   if (view.builderError) return ['', ...errorLines(view, width).slice(1), '', ...say('Type a task below to try again.')];
-  if (hasReady) return ['', ` ${c.text('Builder is paused.')}`, ...say('Type a task below to carry on with the ready cards.')];
-  return ['', ` ${c.text('Builder is free.')}`, ...say('Type a task below, or mark a card ready (tab → plan, space).')];
+  if (hasReady) return ['', ` ${c.text('Builder is paused.')}`, ...say('Type a task below to carry on with the ready steps.')];
+  return [
+    '', ` ${c.text('Builder is free.')}`,
+    ...say('Ready the next step with ⏎ on an empty line, or type a task here to build it right away.'),
+  ];
 }
 
 export function builderPane(view: FadeView, o: BuilderPaneOptions, editor: Editor): string[] {
-  const input = editorBlock(editor, o.width, o.focused, 'note to builder…');
+  const input = editorBlock(editor, o.width, o.focused, view.building ? 'note to builder…' : 'type a task to build it now…');
   const bodyHeight = Math.max(0, o.height - 1 - input.length);
   const building = view.building;
   const title = building ? `  ${c.text(sanitize(building.title))}` : '';
@@ -67,9 +70,12 @@ export function builderPane(view: FadeView, o: BuilderPaneOptions, editor: Edito
     content = idleLines(view, o.width);
   } else if (o.rawLog) {
     const log = view.builderLog.slice(-Math.max(1, bodyHeight));
-    content = [...stepLines(view, o.now), '', ...log.map(line => ` ${c.faint(sanitize(line))}`)];
+    content = ['', ...stepLines(view, o.now), '', ...log.map(line => ` ${c.faint(sanitize(line))}`)];
   } else {
-    content = [...stepLines(view, o.now), ...messageLines(view, o.width), ...noteLines(view, o.width), ...errorLines(view, o.width)];
+    const waiting = building.steps.length === 0 ? [` ${c.faint(`${spinnerFrame(o.now)} reading the card…`)}`] : [];
+    content = [
+      '', ...waiting, ...stepLines(view, o.now), ...messageLines(view, o.width), ...noteLines(view, o.width), ...errorLines(view, o.width),
+    ];
   }
   const shown = viewport(content, bodyHeight, o.scroll);
   return [header, ...withNewHint(shown.lines, shown.behind, o.width), ...input];

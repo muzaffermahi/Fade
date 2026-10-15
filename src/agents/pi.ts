@@ -1,10 +1,23 @@
-import { isAbsolute, relative } from 'node:path';
+import { existsSync } from 'node:fs';
+import { dirname, isAbsolute, join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   DefaultResourceLoader, getAgentDir, ModelRuntime,
 } from '@earendil-works/pi-coding-agent';
 
 export async function createRuntime(): Promise<ModelRuntime> {
   return ModelRuntime.create(); // uses ~/.pi/agent auth, shared with the `pi` CLI
+}
+
+/** Path to Pi's own CLI (bundled with the SDK), for logins and screens Fade hands off to. */
+export function piCliPath(): string | undefined {
+  try {
+    const entry = fileURLToPath(import.meta.resolve('@earendil-works/pi-coding-agent'));
+    const candidate = join(dirname(entry), 'bundle', 'cli.js');
+    return existsSync(candidate) ? candidate : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export function resolveModel(runtime: ModelRuntime, selector?: string) {

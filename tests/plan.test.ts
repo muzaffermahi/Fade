@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { parsePlan, serializePlan } from '../src/plan.js';
+import { doneWhenLines, parsePlan, serializePlan } from '../src/plan.js';
 
 const SAMPLE = `# Plan
 
@@ -58,6 +58,33 @@ test('preamble is kept, and defaults when missing', () => {
   assert.equal(parsePlan('## [draft] A\n').preamble, '# Plan\n');
   assert.equal(parsePlan('').preamble, '# Plan\n');
   assert.match(serializePlan(parsePlan('# Notes app\n\n## [draft] A\n')), /^# Notes app\n\n## \[draft\] A\n/);
+});
+
+test('goal line and Later section round-trip, in a stable order', () => {
+  const text = '# Plan\nGoal: Search that feels instant\n\n## [ready] Index\nbody\n\n## Later\n- Tags\n- Export\n\n## Done\n- Setup\n';
+  const plan = parsePlan(text);
+  assert.equal(plan.goal, 'Search that feels instant');
+  assert.equal(plan.preamble, '# Plan\n');
+  assert.deepEqual(plan.later, ['Tags', 'Export']);
+  assert.equal(serializePlan(plan), text);
+});
+
+test('older plans without a goal or Later still parse, and gain nothing they did not have', () => {
+  const plan = parsePlan(SAMPLE);
+  assert.equal(plan.goal, '');
+  assert.deepEqual(plan.later, []);
+  assert.equal(serializePlan(plan), SAMPLE);
+});
+
+test('a goal line anywhere in the preamble is found, case-insensitively', () => {
+  const plan = parsePlan('# Notes\n\nSome intro.\ngoal:  Ship it  \n\n## [draft] A\n');
+  assert.equal(plan.goal, 'Ship it');
+  assert.equal(plan.preamble, '# Notes\n\nSome intro.\n');
+});
+
+test('"Done when" lines are pulled out of a card body', () => {
+  assert.deepEqual(doneWhenLines('Do it.\nDone when: it works.\n- done when: tests pass'), ['it works.', 'tests pass']);
+  assert.deepEqual(doneWhenLines('No criteria here.'), []);
 });
 
 test('empty done section is omitted and output ends with a newline', () => {

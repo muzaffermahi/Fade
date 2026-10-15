@@ -1,11 +1,14 @@
 import { Markdown, type Editor, type MarkdownTheme } from '@earendil-works/pi-tui';
 import type { FadeView } from '../view.js';
 import type { TranscriptEntry } from '../types.js';
+import { wordmark } from './logo.js';
 import { editorBlock, paneHeader, viewport, withNewHint, type PaneOptions } from './pane.js';
-import { bold, c, sanitize, underline, wrap } from './theme.js';
+import { bold, c, GLYPH, sanitize, underline, wrap } from './theme.js';
 
 const LABEL_WIDTH = 11;
-const INDENT = ' '.repeat(LABEL_WIDTH + 1);
+const INDENT = ' '.repeat(LABEL_WIDTH + 2);
+/** Room kept free on the right so replies don't run into the pane edge. */
+const RIGHT_MARGIN = 2;
 
 const markdownTheme: MarkdownTheme = {
   heading: text => bold(c.mint(text)),
@@ -39,8 +42,23 @@ export class CompanionRenderer {
     return md;
   }
 
-  private entryLines(entry: TranscriptEntry, key: string, width: number): string[] {
-    const body = Math.max(10, width - LABEL_WIDTH - 2);
+  /** A step the Companion proposed, drawn with its live state. The fresh one says how to ready it. */
+  private cardLines(title: string, view: FadeView, body: number): string[] {
+    const card = view.cards.find(cd => cd.title === title);
+    if (!card) {
+      const shipped = view.done.some(entry => entry.title === title);
+      return [`${INDENT}${c.faint(`${shipped ? GLYPH.done : '+'} ${sanitize(title)}`)}`];
+    }
+    const glyph = card.state === 'review' ? c.lavender(GLYPH.review) : card.state === 'draft' ? c.faint(GLYPH.draft) : c.mint(GLYPH[card.state]);
+    const fresh = view.freshDraft === title ? `   ${c.text('⏎')} ${c.muted('ready it')}` : '';
+    const first = `${INDENT}${glyph} ${bold(c.text(sanitize(card.title)))} ${c.muted(`· ${card.state}`)}${fresh}`;
+    const summary = (card.body.split('\n').find(line => line.trim() && !/^done when:/i.test(line.trim())) ?? '').trim();
+    const rest = summary ? wrap(summary, body - 2).slice(0, 2).map(line => `${INDENT}  ${c.faint(line)}`) : [];
+    return [first, ...rest];
+  }
+
+  private entryLines(entry: TranscriptEntry, key: string, width: number, view: FadeView): string[] {
+    const body = Math.max(10, width - LABEL_WIDTH - 2 - RIGHT_MARGIN);
     if (entry.role === 'you' || entry.role === 'companion') {
       const label = entry.role === 'you' ? c.lavender('you'.padEnd(LABEL_WIDTH)) : c.mint('companion'.padEnd(LABEL_WIDTH));
       const lines = entry.role === 'you'
@@ -48,7 +66,9 @@ export class CompanionRenderer {
         : this.markdown(key, entry.text).render(body);
       return lines.map((line, i) => ` ${i === 0 ? label : ' '.repeat(LABEL_WIDTH)} ${line}`);
     }
-    if (entry.role === 'card') return [`${INDENT}${c.mint(`+ ${sanitize(entry.text)}`)}`];
+    if (entry.role === 'card') return this.cardLines(entry.text, view, body);
+    if (entry.role === 'goal') return [`${INDENT}${c.mint('◎')} ${bold(c.mint('Goal:'))} ${c.text(sanitize(entry.text))}`];
+    if (entry.role === 'parked') return [`${INDENT}${c.faint(`↷ parked for later: ${sanitize(entry.text)}`)}`];
     if (entry.role === 'tool') return [`${INDENT}${c.faint(sanitize(entry.text))}`];
     return wrap(entry.text, body).map(line => `${INDENT}${c.rose(line)}`);
   }
@@ -58,26 +78,36 @@ export class CompanionRenderer {
     view.companion.forEach((entry, i) => {
       const spaced = entry.role === 'you' || entry.role === 'companion';
       if (spaced && lines.length > 0) lines.push('');
-      lines.push(...this.entryLines(entry, `${i}:${entry.text.length}:${entry.text.slice(0, 40)}`, width));
+      lines.push(...this.entryLines(entry, `${i}:${entry.text.length}:${entry.text.slice(0, 40)}`, width, view));
     });
     if (view.companionLive) {
       if (lines.length > 0) lines.push('');
-      lines.push(...this.entryLines({ role: 'companion', text: view.companionLive }, 'live', width));
+      lines.push(...this.entryLines({ role: 'companion', text: view.companionLive }, 'live', width, view));
     }
     return lines;
   }
 
-  emptyLines(): string[] {
-    return ['', ` ${c.text('What are we making?')}`];
+  /** First thing you see: the mark (if there's room and no banner above) and one clear question. */
+  emptyLines(view: FadeView, o: PaneOptions): string[] {
+    const mark = o.showMark && o.width >= 78 && o.height >= 12 ? ['', ...wordmark(o.width - 2).map(line => ` ${line}`)] : [];
+    const say = (text: string): string[] => wrap(text, o.width - 4).map(line => ` ${c.muted(line)}`);
+    if (view.goal) {
+      return [...mark, '', ` ${c.text('What is the next step?')}`, ...say(`For: ${view.goal}`)];
+    }
+    return [
+      ...mark, '', ` ${c.text('What are we making?')}`,
+      ...say('Say it in a sentence. The Companion turns it into a goal and a first step, and the Builder starts as soon as you ready it.'),
+    ];
   }
 
   render(view: FadeView, o: PaneOptions, editor: Editor): string[] {
-    const input = editorBlock(editor, o.width, o.focused, 'talk it through…');
+    const placeholder = view.goal ? 'talk it through… try "suggest the next step"' : 'what are we making?';
+    const input = editorBlock(editor, o.width, o.focused, placeholder);
     const bodyHeight = Math.max(0, o.height - 1 - input.length);
     const right = view.companionBusy ? c.lavender('thinking…') : '';
     const header = paneHeader('COMPANION', s => bold(c.lavender(s)), o.focused, '', right, o.width);
     const content = view.companion.length === 0 && !view.companionLive
-      ? this.emptyLines()
+      ? this.emptyLines(view, { ...o, height: bodyHeight })
       : this.transcriptLines(view, o.width);
     const shown = viewport(content, bodyHeight, o.scroll);
     return [header, ...withNewHint(shown.lines, shown.behind, o.width), ...input];

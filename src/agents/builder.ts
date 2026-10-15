@@ -16,6 +16,7 @@ export interface PiBuilderOptions {
   cwd: string;
   runtime: ModelRuntime;
   model?: string;
+  onModelChange?: (selector: string) => void;
 }
 
 export class PiBuilder implements BuilderAgent {
@@ -26,6 +27,7 @@ export class PiBuilder implements BuilderAgent {
   private stopped = false;
   private running = false;
   private streamed = '';
+  private pendingNotes: string[] = [];
 
   readonly slash: SlashHost;
 
@@ -33,9 +35,16 @@ export class PiBuilder implements BuilderAgent {
     this.slash = new PiSlash({
       session: () => this.session,
       runtime: opts.runtime,
+      sessionDir: this.sessionDir,
       fresh: () => this.open(true),
+      reopen: () => this.open(false),
+      ...(opts.onModelChange ? { onModelChange: opts.onModelChange } : {}),
       acceptsPrompts: false,
     });
+  }
+
+  private get sessionDir(): string {
+    return join(this.opts.cwd, '.fade', 'sessions', 'builder');
   }
 
   get busy(): boolean {
@@ -53,7 +62,7 @@ export class PiBuilder implements BuilderAgent {
   /** Opens the most recent session, or a brand-new one when `fresh` is set (for /new). */
   private async open(fresh: boolean): Promise<void> {
     const model = this.session?.model ?? resolveModel(this.opts.runtime, this.opts.model);
-    const dir = join(this.opts.cwd, '.fade', 'sessions', 'builder');
+    const dir = this.sessionDir;
     const { session } = await createAgentSession({
       cwd: this.opts.cwd,
       modelRuntime: this.opts.runtime,
@@ -91,9 +100,25 @@ export class PiBuilder implements BuilderAgent {
       name: 'fade_done',
       label: 'Card done',
       description: 'Call when the card is finished and verified. This must be your final action.',
-      parameters: Type.Object({ summary: Type.String(), howToTry: Type.String() }),
+      parameters: Type.Object({
+        summary: Type.String({ description: '1-2 plain sentences about what changed.' }),
+        howToTry: Type.String({ description: 'One line telling the human how to see it working.' }),
+        tryCommand: Type.Optional(Type.String({ description: 'One finite shell command that shows it working.' })),
+        checks: Type.Optional(Type.Array(Type.Object({
+          criterion: Type.String({ description: 'A "Done when" line from the card.' }),
+          passed: Type.Boolean(),
+          evidence: Type.Optional(Type.String({ description: 'One line: what you ran or saw.' })),
+        }))),
+      }),
       execute: async (_id, params) => {
-        this.outcome = { kind: 'done', summary: params.summary, howToTry: params.howToTry };
+        const outcome: BuildOutcome = { kind: 'done', summary: params.summary, howToTry: params.howToTry };
+        if (params.tryCommand?.trim()) outcome.tryCommand = params.tryCommand.trim();
+        if (params.checks && params.checks.length > 0) {
+          outcome.checks = params.checks.map(check => ({
+            criterion: check.criterion, passed: check.passed, ...(check.evidence ? { evidence: check.evidence } : {}),
+          }));
+        }
+        this.outcome = outcome;
         return { content: [{ type: 'text', text: 'Recorded. Stop now.' }], details: undefined };
       },
     });
@@ -112,6 +137,7 @@ export class PiBuilder implements BuilderAgent {
 
   private onSessionEvent(event: { type: string } & Record<string, unknown>): void {
     if (!this.running) return;
+    this.flushNotes();
     if (event.type === 'message_update') {
       const delta = textDelta(event.assistantMessageEvent);
       if (delta) {
@@ -138,6 +164,7 @@ export class PiBuilder implements BuilderAgent {
     this.outcome = undefined;
     this.stopped = false;
     this.streamed = '';
+    this.pendingNotes = [];
     this.running = true;
     try {
       await session.prompt(cardMessage(card, context));
@@ -151,13 +178,21 @@ export class PiBuilder implements BuilderAgent {
       return { kind: 'failed', error: `Builder couldn't continue: ${errorMessage(error)}` };
     } finally {
       this.running = false;
+      this.pendingNotes = [];
     }
   }
 
+  /** Notes sent before the run starts streaming are held, then steered in as soon as it does. */
   async note(text: string): Promise<void> {
+    this.pendingNotes.push(text);
+    this.flushNotes();
+  }
+
+  private flushNotes(): void {
     const session = this.session;
-    if (!session || !session.isStreaming) return;
-    await session.steer(`Note from the human: ${text}`);
+    if (!session || !this.running || !session.isStreaming || this.pendingNotes.length === 0) return;
+    const notes = this.pendingNotes.splice(0);
+    for (const text of notes) void session.steer(`Note from the human: ${text}`).catch(() => undefined);
   }
 
   async stop(): Promise<void> {

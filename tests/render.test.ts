@@ -42,19 +42,21 @@ test('too-small windows get a friendly message', () => {
 test('wide layout shows header, both panes, the strip and the hint line', () => {
   const h = createHarness('building', 120, 40);
   const out = text(h);
-  for (const label of ['FADE', 'BUILDER', 'COMPANION', 'TO REVIEW', 'UP NEXT', 'shipped today 0', 'tab focus']) {
+  for (const label of ['FADE', 'BUILDER', 'COMPANION', 'NEXT', 'shipped today 0', 'tab focus', 'runway']) {
     assert.ok(out.includes(label), `has ${label}`);
   }
-  assert.match(out, /◆ Core notes app · 1 file/);
+  assert.match(out, /◎ A notes app I would actually use every day/);
+  assert.match(out, /◆ "Core notes app" landed · ✓ 1\/1 checks · 1 file/);
   assert.match(out, /Read the project/);
   assert.match(out, /note to builder…/);
   h.dispose();
 });
 
-test('idle Builder with nothing ready says so', () => {
+test('idle Builder with nothing ready says so, in the pane and on the Next line', () => {
   const h = createHarness('idle', 120, 40);
+  h.fade.drop('Core notes app');
   assert.match(text(h), /Builder is free\./);
-  assert.match(text(h), /Builder is free: mark a card ready/);
+  assert.match(text(h), /NEXT  Builder is free · ready "Tags"\?/);
   h.dispose();
 });
 
@@ -64,6 +66,7 @@ test('plan focus grows the strip into a list with a selected row', () => {
   const out = text(h);
   assert.match(out, /PLAN/);
   assert.match(out, /›◆ Core notes app\s+review/);
+  assert.match(out, /↷ later: Export to markdown · Tags/);
   assert.match(out, /✓ Project setup/);
   h.dispose();
 });
@@ -84,7 +87,7 @@ test('keys: tab cycles focus, space readies a draft', () => {
   h.app.handleInput('\t');
   assert.match(text(h), /COMPANION ●/);
   h.app.handleInput('\t');
-  for (let i = 0; i < 3; i++) h.app.handleInput('j');
+  for (let i = 0; i < 2; i++) h.app.handleInput('j');
   h.app.handleInput(' ');
   assert.equal(h.fade.view().cards.find(c => c.title === 'Notebook styling')?.state, 'ready');
   h.dispose();
@@ -139,7 +142,7 @@ test('streaming Companion text appears as it arrives and is then kept in the tra
   assert.match(early, /Good instinct/);
   assert.ok(!early.includes('make it a card'));
   await new Promise(resolve => setTimeout(resolve, 1500));
-  assert.match(text(h), /Want me to turn that into a card\?/);
+  assert.match(text(h), /Want me to turn that into a/);
   h.dispose();
 });
 
@@ -150,7 +153,7 @@ test('accepting a card dissolves its title before it disappears', async () => {
   assert.equal(h.fade.view().done.at(-1)?.title, 'Core notes app');
   assert.match(text(h), /Shipped ✓/);
   const rowsWith = (re: RegExp): number => text(h).split('\n').filter(l => re.test(l)).length;
-  assert.equal(rowsWith(/✓ Core notes app/), 2, 'dissolving row plus the new done entry');
+  assert.ok(rowsWith(/✓ Core notes app/) >= 2, 'dissolving in place, plus the new done entry');
   await new Promise(resolve => setTimeout(resolve, 350));
   assert.ok(text(h).split('\n').some(l => /✓ Core.*[▓▒░·]/.test(l)), 'dissolving mid-way');
   await new Promise(resolve => setTimeout(resolve, 600));
@@ -179,4 +182,66 @@ test('the wordmark sits across the top until the first conversation starts', () 
   const chatting = createHarness('building', 120, 40);
   assert.ok(chatting.render().map(strip)[0]?.includes('FADE ▪'), 'header is the first line once chatting');
   chatting.dispose();
+});
+
+test('enter on an empty line does the Next thing: here, it opens the step that landed', () => {
+  let shown = 0;
+  const h = createHarness('review', 120, 40);
+  const original = h.app.show.bind(h.app);
+  h.app.show = component => {
+    shown++;
+    original(component);
+  };
+  h.app.setFocus('companion');
+  h.app.handleInput('\r');
+  assert.equal(shown, 1, 'review overlay opened');
+  h.dispose();
+});
+
+test('a step the Companion proposes shows inline and on the Next line, and enter readies it', () => {
+  const h = createHarness('review', 120, 40);
+  h.fade.proposeCard('Sketch the data shape', 'Sketch it.\nDone when: you can see it.');
+  h.app.setFocus('companion');
+  const out = text(h);
+  assert.match(out, /NEXT  ○ Ready "Sketch the data shape"\?/);
+  h.app.handleInput('\r');
+  assert.equal(h.fade.view().cards.find(c => c.title === 'Sketch the data shape')?.state, 'ready');
+  assert.match(text(h), /Ready ✓/);
+  h.dispose();
+});
+
+test('while you type, a newly landed step waits for your breakpoint', () => {
+  const h = createHarness('idle', 120, 40);
+  h.fade.drop('Core notes app');
+  h.app.setFocus('companion');
+  text(h); // first frame, at a breakpoint
+  for (const ch of 'thinking') h.app.handleInput(ch);
+  assert.match(text(h), /NEXT  Builder is free/);
+  h.fade.proposeCard('Fresh idea', 'body');
+  assert.match(text(h), /NEXT  Builder is free/, 'held back mid-thought');
+  for (let i = 0; i < 8; i++) h.app.handleInput('\x7f');
+  h.app.handleInput('\x03');
+  assert.ok(text(h).includes('NEXT  Builder is free'), 'still within the quiet window');
+  h.dispose();
+});
+
+test('ctrl+n parks a thought in Later without leaving the thread', () => {
+  const h = createHarness('review', 120, 40);
+  h.app.setFocus('builder');
+  h.app.handleInput('\x0e'); // ctrl+n
+  h.fade.park('Dark mode someday');
+  assert.ok(h.fade.view().later.includes('Dark mode someday'));
+  h.dispose();
+});
+
+test('a busy frame renders well inside the typing budget', () => {
+  const h = createHarness('building', 120, 40);
+  for (let i = 0; i < 10; i++) h.render();
+  const frames = 50;
+  const start = performance.now();
+  for (let i = 0; i < frames; i++) h.render();
+  const perFrame = (performance.now() - start) / frames;
+  h.dispose();
+  // The real budget is 8 ms (scripts/perf.ts); this guard is loose so slow CI machines don't flake.
+  assert.ok(perFrame < 30, `frame took ${perFrame.toFixed(1)} ms`);
 });

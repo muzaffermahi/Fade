@@ -40,7 +40,8 @@ export class CompanionChat {
     } catch (error) {
       this.onEvent({ type: 'error', text: error instanceof Error ? error.message : String(error) });
     }
-    this.live = undefined;
+    // A follow-up message returns right away while the first reply still streams: keep showing it.
+    if (!this.companion.busy) this.live = undefined;
     this.notify();
   }
 
@@ -50,9 +51,10 @@ export class CompanionChat {
       this.live = undefined;
       if (event.text.trim()) this.push({ role: 'companion', text: event.text });
     }
-    if (event.type === 'card') {
-      this.push({ role: 'card', text: `${event.title}  ${event.action === 'added' ? '(draft)' : '(edited)'}` });
-    }
+    // Card entries store just the title; the pane looks up the card's live state when it draws them.
+    if (event.type === 'card') this.push({ role: 'card', text: event.title });
+    if (event.type === 'goal') this.push({ role: 'goal', text: event.text });
+    if (event.type === 'parked') this.push({ role: 'parked', text: event.text });
     if (event.type === 'tool') this.push({ role: 'tool', text: event.text });
     if (event.type === 'error') this.push({ role: 'error', text: `Companion: ${event.text}` });
     this.notify();
