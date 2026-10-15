@@ -391,7 +391,7 @@ test('v0.4 yes readies the only proposal; two proposals send yes to Fade', async
     fade.proposeCard('Only', 'One thing.');
     fade.sendToCompanion('yes');
     assert.equal(fade.view().building?.title, 'Only');
-    assert.equal(fade.view().companion.at(-1)?.text, 'On it: Only.');
+    assert.match(fade.view().companion.at(-1)?.text ?? '', /^On it: Only\. The Builder is on it now/);
     fade.proposeCard('A', 'a'); fade.proposeCard('B', 'b');
     fade.sendToCompanion('yes');
     await until(() => !fade.view().companionBusy);
@@ -564,12 +564,13 @@ test('final pass: normalized queue replies come from Fade and replace model ackn
     fade.sendToCompanion('add a dark mode toggle');
     await until(() => !fade.view().companionBusy && fade.view().done.length === 1);
     const replies = fade.view().companion.filter(entry => /^On it:/i.test(entry.text));
-    assert.deepEqual(replies, [{ role: 'landed', text: 'On it: Dark mode toggle.' }]);
+    assert.equal(replies.length, 1);
+    assert.match(replies[0]?.text ?? '', /^On it: Dark mode toggle\. The Builder is on it now/);
     assert.equal(fade.view().done[0]?.title, 'Dark mode toggle');
     fade.sendToCompanion('undo that');
-    assert.equal(fade.view().companion.at(-1)?.text, '↩ Undoing Dark mode toggle…');
+    assert.equal(fade.view().companion.at(-1)?.text, '↶ Undoing Dark mode toggle…');
     await until(() => !fade.view().building);
-    assert.equal(fade.view().companion.at(-1)?.text, '↩ Dark mode toggle is undone.');
+    assert.equal(fade.view().companion.at(-1)?.text, '↶ Dark mode toggle is undone.');
   } finally { fade.dispose(); }
 });
 
@@ -596,7 +597,7 @@ test('final pass: continue resumes one paused request without a model turn', asy
     fade.sendToCompanion('continue');
     assert.equal(fade.view().building?.title, 'Paused');
     assert.equal(fade.view().companionBusy, false);
-    assert.equal(fade.view().companion.at(-1)?.text, 'On it: Paused.');
+    assert.match(fade.view().companion.at(-1)?.text ?? '', /^On it: Paused\./);
     await fade.stopBuilder();
   } finally {fade.dispose();}
 });

@@ -96,33 +96,22 @@ export class Fade extends Engine {
   }
 
   async revise(title: string, body: string, startOver = false): Promise<void> {
+    if (this.model.find(title)?.state === 'building') await this.stopBuilder();
+    if (this.disposed) return;
     let card = this.model.find(title);
+    let sha = card ? (this.removeReview(title)?.sha ?? this.checkpoints.get(title)) : undefined;
     if (!card) {
+      // Revising accepted work brings it back from Done as a new request.
       const done = this.model.plan.done.findLast((d) => d.title === title);
       if (!done) return;
       this.model.plan.done = this.model.plan.done.filter((d) => d !== done);
-      this.model.add(
-        title,
-        body + (startOver && done.sha ? `\n\nStart from: revert ${done.sha} first` : ''),
-        'ready',
-        true,
-      );
-      this.model.save();
-      this.chat.reply(`On it: ${title}.`);
-      this.tick();
-      this.persist();
-      return;
-    }
-    const wasBuilding = card.state === 'building';
-    if (wasBuilding) {
-      await this.stopBuilder();
-      if (this.disposed) return;
-      card = this.model.find(title);
+      sha = done.sha;
+      card = this.model.find(this.model.add(title, '', 'ready', true));
       if (!card) return;
     }
-    const review = this.removeReview(title);
-    const sha = review?.sha ?? this.checkpoints.get(title);
-    card.body = body.trim() + (startOver && sha ? `\n\nStart from: revert ${sha} first` : '');
+    card.body = body.trim() + (startOver && sha ? `
+
+Start from: revert ${sha} first` : '');
     card.state = 'ready';
     this.model.moveToTop(card);
     this.model.save();
@@ -151,7 +140,7 @@ export class Fade extends Engine {
   }
 
   private queueUndo(title: string, sha: string): void {
-    this.chat.reply(`↩ Undoing ${title}…`);
+    this.chat.reply(`↶ Undoing ${title}…`);
     const body =
       `Revert the changes from commit ${sha} ("fade: ${title}") while keeping later work intact.\n` +
       'Include directly preceding partial checkpoints for this same request, preserving unrelated work.\n' +

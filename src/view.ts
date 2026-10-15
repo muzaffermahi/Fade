@@ -55,7 +55,7 @@ export function landingMessage(review: Review, retried = false): string {
   }
   if (review.verdict === 'verified') {
     if (!review.sha) return `○ ${name} — not checked: no checkpoint was saved. Ask to see the result.`;
-    if (name.startsWith('Undo: ')) return `↩ ${name.slice(6)} is undone.`;
+    if (name.startsWith('Undo: ')) return `↶ ${name.slice(6)} is undone.`;
     const plain = review.checks
       ?.filter((c) => c.ran?.code === 0)
       .map((c) => prose(c.criterion))

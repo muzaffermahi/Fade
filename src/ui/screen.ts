@@ -2,7 +2,7 @@ import { truncateToWidth, visibleWidth, type Editor } from '@earendil-works/pi-t
 import type { FadeView } from '../view.js';
 import { CompanionRenderer } from './companion-pane.js';
 import { editorBlock } from './pane.js';
-import { hasRail, rail, statusLine } from './rail.js';
+import { hasWork, rail, statusLine } from './rail.js';
 import { c, paintLine, sanitize, spread } from './theme.js';
 
 export const MIN_WIDTH = 60;
@@ -35,11 +35,12 @@ export function renderScreen(
   const folder = meta.cwd.split(/[\\/]/).filter(Boolean).pop() ?? meta.cwd;
   const left = ` ${c.mint('fade')} · ${c.text(sanitize(folder))} · ${c.muted(sanitize(meta.branch))}`;
   const header = left;
-  const active = hasRail(view);
+  const active = hasWork(view);
   const wide = width >= WIDE_WIDTH;
   const narrowStatus = !wide;
-  const placeholder =
-    st.idle && !active && view.companion.length > 0
+  const placeholder = view.building
+    ? '› keep talking: plan the next thing, ask, or steer while it builds…'
+    : st.idle && !active && view.companion.length > 0
       ? '› what would you like to do next?'
       : '› tell fade what you want…';
   const input = editorBlock(parts.editor, width, parts.editor.focused, placeholder);
@@ -53,9 +54,9 @@ export function renderScreen(
     scroll: st.scroll,
     now: st.now,
   });
-  const right = wide && active ? rail(view, railWidth, st.now, height) : [];
+  const right = wide ? rail(view, railWidth, st.now, height) : [];
   const body = fit(conversation, height, conversationWidth).map((line, i) =>
-    wide && active ? `${paintLine(line, conversationWidth)}${c.faint('│')}${right[i] ?? ''}` : line,
+    wide ? `${paintLine(line, conversationWidth)}${c.faint('│')}${right[i] ?? ''}` : line,
   );
   const toast = st.toast;
   const message = toast ? ` ${c.mint(sanitize(toast))}` : view.companionBusy ? c.muted(' fade is thinking…') : '';
@@ -64,7 +65,7 @@ export function renderScreen(
     header,
     c.faint('─'.repeat(width)),
     ...body,
-    ...(narrowStatus ? [active ? statusLine(view, st.now) : ''] : []),
+    ...(narrowStatus ? [statusLine(view, st.now)] : []),
     ...input,
     footer,
   ];

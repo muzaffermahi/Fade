@@ -29,6 +29,9 @@ export class CompanionChat {
 
   reply(text: string): void {
     if (text.startsWith('On it:')) {
+      // The first build in a project is the moment to teach the one idea: you never have to wait.
+      const first = !this.state.data.companion.some((entry) => entry.text.startsWith('On it:'));
+      if (first) text = `${text} The Builder is on it now; keep talking to me while it builds.`;
       const start = this.state.data.companion.findLastIndex((entry) => entry.role === 'you');
       this.state.data.companion = this.state.data.companion.filter(
         (entry, index) => index <= start || entry.role !== 'companion' || !READ_BACK.test(entry.text),

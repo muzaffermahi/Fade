@@ -13,7 +13,7 @@ import { assemble } from './assemble.js';
 import { startUi } from './ui/start.js';
 
 const VERSION = '0.5.0';
-const HELP = `Fade: just talk to it.
+const HELP = `Fade: keep talking while it builds. You talk with Fade; the Builder codes beside you.
 
   fade                      run in the current directory
   fade --demo               try it in a temp folder with fake agents (no API calls, no key)

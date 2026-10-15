@@ -78,26 +78,18 @@ export class FakeBuilder implements BuilderAgent {
         if (i === 2) {
           const undo = card.title.startsWith('Undo:') && /commit ([a-f0-9]+)/.exec(card.body)?.[1];
           if (undo) {
-            const files = execFileSync('git', ['show', '--format=', '--name-only', undo], {
-              cwd: this.cwd,
-              encoding: 'utf8',
-            })
-              .split('\n')
-              .filter((file) => /^fade-demo\/[a-z0-9-]+\.txt$/.test(file));
-            if (files.length) {
-              for (const file of files) {
-                let existed = true;
-                try {
-                  execFileSync('git', ['cat-file', '-e', `${undo}^:${file}`], { cwd: this.cwd, stdio: 'pipe' });
-                } catch {
-                  existed = false;
-                }
-                if (existed)
-                  execFileSync('git', ['restore', `--source=${undo}^`, '--worktree', '--', file], { cwd: this.cwd });
-                else rmSync(join(this.cwd, file), { force: true });
+            // Restore only the demo files that commit touched; PLAN.md belongs to Fade.
+            const show = ['show', '--format=', '--name-only', undo];
+            const changed = execFileSync('git', show, { cwd: this.cwd, encoding: 'utf8' }).split('\n');
+            const files = changed.filter((file) => file.startsWith('fade-demo/'));
+            for (const file of files) {
+              try {
+                execFileSync('git', ['checkout', `${undo}^`, '--', file], { cwd: this.cwd, stdio: 'pipe' });
+              } catch {
+                rmSync(join(this.cwd, file), { force: true }); // the file was new in that commit
               }
-              undoProof = `git diff --exit-code "${undo}^" -- ${files.join(' ')}`;
             }
+            undoProof = `git diff --exit-code "${undo}^" -- ${files.join(' ')}`;
           } else this.writeDemoFile(card);
         }
       }

@@ -41,7 +41,7 @@ Everything on screen should be calm, steady and human.
    these lines (no model call) for every fast path and every work tool:
    - "yes" to a look → `✓ Friendlier help — done.`
    - "yes" to a proposal → `On it: <title>.`
-   - "undo that" → `↩ Undoing Friendlier help…`, then `↩ Friendlier help is undone.`
+   - "undo that" → `↶ Undoing Friendlier help…`, then `↶ Friendlier help is undone.`
    - "stop" → `■ Stopped Search. Say "continue" or tell me what to change.`
    - Keep the toast only for things that aren't part of the conversation (Ctrl+C warning, /model).
 3. **The ✓ is the hero.** It's the one thing no other tool has. Render "checked" verified outcomes with
@@ -50,7 +50,7 @@ Everything on screen should be calm, steady and human.
    everywhere: conversation, rail, Show.
 4. **Human wording.** Go through every string the user can see: landing messages, splash, help,
    errors, empty state and placeholders. Rewrite anything that reads like a log line:
-   - Undo cards land as `↩ <title> is undone.`, never "Undo: X — that change is gone and the project
+   - Undo cards land as `↶ <title> is undone.`, never "Undo: X — that change is gone and the project
      still builds…".
    - Titles start with a capital letter and are at most 5 words. Normalize them in `PlanModel.add`
      ("add a dark mode toggle" → "Dark mode toggle"). The fake agents use the same rule, so the demo

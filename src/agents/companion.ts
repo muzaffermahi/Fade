@@ -44,6 +44,9 @@ export interface PiCompanionOptions {
   onModelChange?: (selector: string) => void;
 }
 
+/** A tool reply the model reads. */
+const result = (text: string) => ({ content: [{ type: 'text' as const, text }], details: undefined });
+
 export class PiCompanion implements CompanionAgent {
   private session: AgentSession | undefined;
   private unsubscribe: (() => void) | undefined;
@@ -111,7 +114,7 @@ export class PiCompanion implements CompanionAgent {
       parameters: Type.Object({ title: Type.String(), body: Type.String() }),
       execute: async (_id, params) => {
         const title = plan.addCard(params.title, params.body);
-        return { content: [{ type: 'text', text: `Added draft card "${title}".` }], details: undefined };
+        return result(`Added draft card "${title}".`);
       },
     });
     const editTool = defineTool({
@@ -132,7 +135,7 @@ export class PiCompanion implements CompanionAgent {
         if (params.newTitle !== undefined) patch.title = params.newTitle;
         if (params.body !== undefined) patch.body = params.body;
         plan.editCard(params.title, patch);
-        return { content: [{ type: 'text', text: 'Card updated.' }], details: undefined };
+        return result('Card updated.');
       },
     });
     return [addTool, editTool, ...this.threadTools(), ...this.actionTools()];
@@ -148,7 +151,7 @@ export class PiCompanion implements CompanionAgent {
       parameters: Type.Object({ idea: Type.String() }),
       execute: async (_id, params) => {
         plan.park(params.idea);
-        return { content: [{ type: 'text', text: 'Parked in Later.' }], details: undefined };
+        return result('Parked in Later.');
       },
     });
     const promoteTool = defineTool({
@@ -158,7 +161,7 @@ export class PiCompanion implements CompanionAgent {
       parameters: Type.Object({ item: Type.String(), title: Type.String(), body: Type.String() }),
       execute: async (_id, params) => {
         const title = plan.promote(params.item, params.title, params.body);
-        return { content: [{ type: 'text', text: `Added draft card "${title}".` }], details: undefined };
+        return result(`Added draft card "${title}".`);
       },
     });
     return [parkTool, promoteTool];
@@ -166,7 +169,6 @@ export class PiCompanion implements CompanionAgent {
 
   private actionTools() {
     const plan = this.opts.plan;
-    const result = (text: string) => ({ content: [{ type: 'text' as const, text }], details: undefined });
     const titleTool = (name: string, description: string, act: (title: string) => void) =>
       defineTool({
         name,

@@ -48,7 +48,12 @@ export class HelpOverlay extends Overlay {
   }
 
   render(width: number): string[] {
-    const lines = [compactMark(), '', c.muted('Just talk to Fade. The work runs beside you.'), ''];
+    const lines = [compactMark(), ''];
+    const intro =
+      'Two of you work at once: you talk with Fade while the Builder codes beside you. ' +
+      'While it builds, keep talking: plan the next thing, ask questions, or steer. ' +
+      'Checked work lands on its own; only taste questions wait under NEEDS YOU.';
+    lines.push(...wrap(intro, width - 4).map(c.muted), '');
     for (const [key, what] of KEYS) lines.push(`${c.mint(key.padEnd(17))} ${c.text(what)}`);
     lines.push(
       '',
@@ -106,7 +111,9 @@ export class ShowOverlay extends Overlay {
     if (this.changes.length === 0) {
       return this.review.files.length > 0 ? [`${c.muted('Changed')}  ${c.text(this.review.files.join(' · '))}`] : [];
     }
-    const items = this.changes.map((ch) => `${c.text(ch.file)} ${c.mint(`+${ch.added}`)} ${c.rose(`−${ch.removed}`)}`);
+    const items = this.changes.map(
+      (ch) => `${c.text(ch.file)} ${c.mint(`+${ch.added}`)} ${c.rose(`−${ch.removed}`)}`,
+    );
     return [`${c.muted('Changed')}  ${items.join(c.faint(' · '))}`];
   }
 

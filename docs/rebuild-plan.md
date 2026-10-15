@@ -1,4 +1,4 @@
-# Fade: just talk to it
+# Fade: keep talking while it builds
 
 The active final pass is docs/final-pass-plan.md. The owner explicitly keeps Builder MCP,
 codemode and tool_search. This specification describes the final behavior, not a new feature backlog.
@@ -17,16 +17,20 @@ Old Goal lines remain ordinary PLAN.md preamble text, with no separate state or 
 
 ## Screen
 
-The conversation uses at most 88 columns in every state. A rail occupies spare space to its right
-when at least 117 columns are available; it never resizes the conversation. Reserve the compact
-status row at narrower widths. Use one blank line between messages, none inside a message.
-Now/Next/Needs you appear only when populated. Wrap paths with hanging indentation.
+The core idea must be visible at all times: you talk with Fade while the Builder codes beside you.
+The conversation uses at most 88 columns in every state. The sidebar occupies spare space to its right
+when at least 117 columns are available and is always open; it never resizes the conversation.
+It always shows BUILDER, UP NEXT and NEEDS YOU; an empty section shows one faint line explaining it.
+Narrower widths always show one status row (builder state, up next, needs you, a short hint).
+While the Builder works, the composer invites you to keep talking. The first "On it" in a project
+adds one sentence saying so. Use one blank line between messages, none inside a message.
+Wrap paths with hanging indentation.
 
 Empty conversations show dim examples: add a --version flag; why is the login slow?;
 make the settings page calmer. Hide examples after the first message.
 Mint ✓ marks verified outcomes, followed by a faint checked badge. ○ means not checked, with a
 reason and next step. Use the same language in conversation, rail and Show. Undo lands as
-↩ <title> is undone. Human acceptance says ✓ <title> — done, without claiming machine verification.
+↶ <title> is undone. Human acceptance says ✓ <title> — done, without claiming machine verification.
 
 Enter sends; Esc stops the reply/closes a view; PgUp/PgDn scroll. First Ctrl+C clears and warns;
 a second within 1.5 seconds quits. This applies to startup and overlays too.

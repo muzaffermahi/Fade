@@ -86,8 +86,15 @@ export class CompanionRenderer {
         '',
         ` ${c.text('What are we making?')}`,
         '',
+        ...wrap(
+          'You talk with Fade here while the Builder codes beside you. While it builds, keep talking: ' +
+            'plan the next thing, ask questions, or change your mind. You never wait.',
+          Math.max(20, o.width - 2),
+        ).map((line) => ` ${c.muted(line)}`),
+        '',
+        ` ${c.muted('Try:')}`,
         ...['add a --version flag', 'why is the login slow?', 'make the settings page calmer'].map(
-          (text) => ` ${c.faint(text)}`,
+          (text) => `   ${c.faint(text)}`,
         ),
       );
     }

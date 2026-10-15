@@ -19,18 +19,19 @@ for (const [width, height] of [[120, 40], [80, 24], [60, 16]] as const) {
         assert.equal(lines.length, height - 1);
         lines.forEach(l => assert.equal(visibleWidth(l), width));
         const out = lines.map(strip).join('\n');
-        assert.doesNotMatch(out, /said, not run|runway|Tab|tab focus|COMPANION|BUILDER|shipped today|▐█/);
+        assert.doesNotMatch(out, /said, not run|runway|Tab|tab focus|COMPANION|shipped today|▐█/);
         assert.match(strip(lines[0] ?? ''), /fade/);
-        assert.match(out, /tell fade what you want/);
+        assert.match(out, scenario === 'building' ? /keep talking/ : /tell fade what you want/);
         const hint = strip(lines.at(-1) ?? '');
         assert.ok(hint.split(' · ').length <= 4);
-        if (scenario === 'empty') assert.doesNotMatch(out, /NOW|NEXT|NEEDS YOU|needs you|│/);
-        else if (width >= 100) {
-          assert.ok(out.includes('NEEDS YOU'));
-          assert.equal(out.includes('NOW'), scenario === 'building');
+        if (width >= 100) {
+          // The sidebar never closes: the Builder, what's next and what needs you are always in view.
+          for (const section of ['BUILDER', 'UP NEXT', 'NEEDS YOU']) assert.ok(out.includes(section), section);
+          if (scenario === 'empty') assert.match(out, /While it builds, keep/);
         } else {
-          assert.doesNotMatch(out, /NOW|NEEDS YOU/);
-          assert.match(out, /\d needs you/);
+          assert.doesNotMatch(out, /BUILDER|NEEDS YOU/);
+          assert.match(out, scenario === 'building' ? /builder ◌/ : /builder idle/);
+          if (scenario === 'review' || scenario === 'idle') assert.match(out, /\d needs you/);
         }
         assert.doesNotMatch(out, /Goal:|Goal done:|· draft|· review/);
       } finally { h.dispose(); }
@@ -100,7 +101,7 @@ test('v0.4 no focus switching or action keys: space and u are ordinary input', (
     assert.equal(h.fade.view().reviews.length, 1);
   } finally { h.dispose(); }
 });
-test('polish: idle uses full width and hides historical state and goal messages', () => {
+test('polish: the sidebar stays open when idle and historical state stays hidden', () => {
   const h = createHarness('empty', 120, 40);
   try {
     h.fade.model.plan.cards.push({ title: 'Private proposal', state: 'draft', body: 'Repeated body.' });
@@ -108,11 +109,13 @@ test('polish: idle uses full width and hides historical state and goal messages'
     h.app.handleInput('typing');
     h.app.ctrlC();
     const out = h.render().map(strip).join('\n');
-    assert.doesNotMatch(out, /typing|NOW|NEXT|NEEDS YOU|Legacy goal|progress/);
+    assert.doesNotMatch(out, /typing|Legacy goal|progress/);
+    assert.match(out, /BUILDER[\s\S]*Idle/);
+    assert.match(out, /Private proposal \(say yes\)/);
   } finally { h.dispose(); }
 });
 
-test('polish: rail paths wrap with hanging indentation and omit empty sections', () => {
+test('polish: rail paths wrap with hanging indentation and empty sections explain themselves', () => {
   const h = createHarness('building', 120, 40);
   try {
     const view = h.fade.view();
@@ -124,7 +127,8 @@ test('polish: rail paths wrap with hanging indentation and omit empty sections',
     const lines = rail(view, 32, Date.now(), 50).map(strip);
     lines.forEach(line => assert.ok(visibleWidth(line) <= 32, line));
     assert.match(lines.join('\n'), /module.py/);
-    assert.doesNotMatch(lines.join('\n'), /NEXT|NEEDS YOU/);
+    assert.match(lines.join('\n'), /UP NEXT[\s\S]*Keep talking while it/);
+    assert.match(lines.join('\n'), /NEEDS YOU[\s\S]*Nothing/);
     const step = lines.findIndex(line => line.includes('◌ Read'));
     assert.ok(lines[step + 1]?.startsWith('     '));
     const action = lines.findIndex(line => line.includes('└ editing'));
