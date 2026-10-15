@@ -81,12 +81,38 @@ export function describeTool(cwd: string, toolName: string, args: unknown): stri
 }
 
 export function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return humanError(error instanceof Error ? error.message : String(error));
+}
+
+const AUTH_TROUBLE = /oauth refresh failed|invalid_grant|refresh token|unauthori[sz]ed|invalid api key|invalid x-api-key|authentication|\b401\b|no api key/i;
+
+/**
+ * Provider errors arrive as long technical dumps (URLs, JSON bodies, stack traces).
+ * Turn them into one line a person can act on.
+ */
+export function humanError(raw: string): string {
+  const text = raw.replace(/\s+/g, ' ').trim();
+  if (AUTH_TROUBLE.test(text)) {
+    const provider = /for ([a-z0-9-]+)[:.]/i.exec(text)?.[1] ?? /provider[ "']+([a-z0-9-]+)/i.exec(text)?.[1];
+    const who = provider ? `Your ${provider} login` : 'The model login';
+    return `${who} has expired or is missing. Type /login in this pane (or run fade login), then try again.`;
+  }
+  if (/insufficient (account )?funds|insufficient_quota|\b402\b|credit balance|out of credits/i.test(text)) {
+    return 'That provider account is out of credits. Top it up, or switch with /model in this pane.';
+  }
+  if (/econnrefused|fetch failed|enotfound|network/i.test(text)) {
+    return 'Could not reach the model provider. Check your connection (or that your local model server is running).';
+  }
+  if (/rate.?limit|\b429\b|overloaded|\b529\b/i.test(text)) {
+    return 'The model provider is rate-limiting or overloaded right now. Wait a moment, then ready the step again.';
+  }
+  const first = text.split(/(?<=[.!?])\s|; details=| stack=| at [\w.<>]+ \(/)[0] ?? text;
+  return first.length > 200 ? `${first.slice(0, 199)}…` : first;
 }
 
 /** If the last assistant message ended in an error (no key, network, rate limit), returns its text. */
 export function lastRunError(messages: readonly unknown[]): string | undefined {
   const last = messages[messages.length - 1];
   if (!isRecord(last) || last.role !== 'assistant' || last.stopReason !== 'error') return undefined;
-  return typeof last.errorMessage === 'string' && last.errorMessage ? last.errorMessage : 'the model request failed';
+  return typeof last.errorMessage === 'string' && last.errorMessage ? humanError(last.errorMessage) : 'the model request failed';
 }

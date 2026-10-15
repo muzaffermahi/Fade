@@ -1,121 +1,90 @@
 # Fade
 
-**Plan the next thing while AI builds this one.**
+**Get your flow back. You navigate, AI drives.**
 
-<!-- Record this from `npm run demo` (or `fade --demo`) and save it as docs/assets/demo.gif -->
+<!-- Record with VHS from `fade --demo` (docs/demo.tape) and save as docs/assets/demo.gif -->
 ![Fade demo](docs/assets/demo.gif)
 
-Fade is a terminal app with two AI agents working at the same time. The **Builder** writes code, one card at a
-time. The **Companion** is a thinking partner: it reads your project, talks things through with you, and turns
-the fuzzy idea into clear cards. You stay in the middle, keyboard only, and nothing steals your focus.
+Waiting on an AI agent kills focus. Fade keeps you on **one thread**: the Builder builds the current step while you
+shape the next one with the Companion, and the screen only ever shows you the **one next thing** worth doing.
+
+- **One thread.** One goal at a time. Stray ideas get parked in *Later* (Ctrl+N), never lost, never chased.
+- **One next thing.** A single NEXT line: a blocked Builder, the step you just discussed, the step that landed, or an
+  idle Builder. Enter on an empty line acts on it. Nothing changes under you while you type.
+- **Runway.** `runway ~12m` tells you how much think-time you have before the Builder runs out of ready steps.
+- **Feedback first.** A landed step opens on your own "Done when" lines with the Builder's verdict. `t` runs the try
+  command, `d` shows the diff.
+- **Any model**, including local ones. Run the Companion on a local model and the Builder on your strongest.
 
 ## Quick start
 
 ```bash
-npm i -g @muzaffermahi/fade   # 1. install
-fade login                    # 2. connect a model provider (Fade reuses Pi's login)
-fade                          # 3. run it in any project folder
+npx @muzaffermahi/fade --demo     # try it: fake agents, no key, no install
+npm i -g @muzaffermahi/fade       # then:
+fade login                        # connect a provider
+fade                              # run in any git project
 ```
 
-Want to look around first? `fade --demo` runs the whole UI in a temp folder with fake agents and no API calls.
-Needs Node 22.19 or newer and git. Windows Terminal, macOS and Linux terminals all work.
+Needs Node 22.19+ and git.
 
-## The mental model
+## The loop
 
-Three things:
-
-- **Builder** (left): takes the topmost *ready* card, builds it, and Fade commits the result.
-- **Companion** (right): helps you decide what to build. It reads the project and writes cards. It never changes code.
-- **Plan** (`PLAN.md`): the ordered list of cards, shared by everyone, editable by hand.
-
-Five states:
+Three things: **Builder** (left, builds the topmost *ready* step), **Companion** (right, thinks with you, reads the
+project, writes steps; never changes code), **Plan** (`PLAN.md`, editable by hand).
 
 ```
-·  draft     an idea being shaped
-○  ready     you pressed Space; the Builder may take it
-◌  building  the Builder is working on it
-◆  review    finished; waiting for you to look
-✓  done      you accepted it; it fades out of the list
+·  draft     an idea being shaped      ◌  building  the Builder is on it
+○  ready     you readied it            ◆  review    landed, waiting for you
+✓  done      accepted; it fades out
 ```
 
-Only you mark cards ready. When the Builder finishes, it makes a git commit, the card moves to *review*, and the
-Builder takes the next ready card. Meanwhile you keep talking to the Companion and reviewing finished work.
-Review a card, then **accept**, **revise** (it goes back on top with your note) or **undo** (Fade queues a card
-that reverts it). Git is the undo button.
+Only you ready steps. Every finished step becomes a git commit, so undo is just another step.
 
 ## Keys
 
-| Key | Where | What it does |
-|---|---|---|
-| `Tab` / `Shift+Tab` | anywhere | focus Builder → Companion → Plan |
-| `Enter` | Builder / Companion | send what you typed |
-| `Esc` | Builder / Companion | stop the current card / reply |
-| `Ctrl+R` | anywhere | open the first card waiting for review |
-| `Ctrl+L` | anywhere | raw Builder log |
-| `PageUp` / `PageDown` | Builder / Companion | scroll |
-| `↑` `↓` (`k` `j`) | Plan | select |
-| `Space` | Plan | mark ready / back to draft |
-| `Enter` | Plan | open the card (review or edit) |
-| `n` | Plan | new card |
-| `Alt+↑` `Alt+↓` (`K` `J`) | Plan | move the card |
-| `x` | Plan | drop the card |
-| `a` `r` `u` | Plan / review | accept · revise · undo |
-| `?` or `F1` | anywhere | help |
-| `Ctrl+C` | anywhere | clear the input; press twice to quit |
+| Key | What it does |
+|---|---|
+| `⏎` on an empty line / `ctrl+r` | do the NEXT thing |
+| `ctrl+n` | park a thought in Later |
+| `tab` | focus Builder → Companion → Plan |
+| `esc` | stop the Builder step / Companion reply |
+| Plan: `space` `⏎` `n` `x` `alt+↑↓` | ready · open · new · drop · move |
+| Review: `a` `r` `u` `t` `d` | accept · revise · undo · try · diff |
+| `/` | commands: `/model` `/goal` `/later` `/recap` `/tree` `/login` and every Pi command |
+| `?` | help |
 
-If you type in the Builder box while it is idle, Fade turns it into a ready card on top of the plan. While it is
-building, what you type is sent to it as a note.
+`/model` in a pane switches that agent's model and remembers it. Pi's own screens (`/tree`, `/resume`, `/settings`)
+open on that agent's session and return when you `/quit`.
 
-## How PLAN.md works
+## Local models
+
+```bash
+fade --companion ollama/<model> --builder anthropic/<model>
+```
+
+Builders need strong tool calling. If a model answers in prose without using tools, Fade says so and suggests using
+it as the Companion instead.
+
+## PLAN.md
 
 ```markdown
 # Plan
+Goal: Add search to the notes app
 
-## [building] Search
-Search notes by title and body as you type.
+## [ready] Index note titles
+Search by title as you type.
 Done when: typing "gro" shows "Groceries".
 
-## [ready] Export to markdown
-One .md file per note in ./export.
-
-## [draft] Notebook styling
-Warm paper, roomy margins, one column.
-
-## Done
-- Core notes app (a1b2c3d)
-- Project setup
+## Later
+- Export to markdown
 ```
 
-Each `## [state] Title` is a card; the text under it is the body. Edit the file by hand while Fade runs and it
-picks the change up. Fade keeps its own bookkeeping (reviews, the Companion chat) in `.fade/`, which it keeps out
-of your commits via `.git/info/exclude`.
-
-## Models
-
-Fade uses [Pi](https://github.com/earendil-works)'s model and credential setup, so whatever you logged into
-works. To pick models, use `fade --builder provider/model --companion provider/model`, or put them in
-`.fade/config.json`: `{ "builder": "...", "companion": "..." }`.
+Edit it while Fade runs; changes are picked up live.
 
 ## Why
 
-Code is cheap now. Clarity isn't.
+Code is cheap now. Clarity isn't. When an agent codes faster than you can read, the bottleneck is knowing what you
+want, and the cost is the wait. Fade is built around the human's attention, not the agent's output.
 
-When an AI can build almost anything in minutes, the slow part is knowing what to build next, and in what order,
-and what "done" looks like. Most tools make you wait while the AI works, then hand you a pile of changes. Fade
-flips that: the Builder is always busy with something you already decided, and you spend your time on the
-thing only you can do, which is getting clear. A good card is a small, checkable promise, and cards are cheap to
-write when you have a thinking partner who has read your code.
-
-## Development
-
-```bash
-npm ci
-npm run check      # typecheck
-npm test           # unit + render tests
-npm run snapshot   # prints headless renders of the key screens
-npm run build      # compiles to dist/
-```
-
-`scripts/live-smoke.ts` runs one tiny card through the real Builder (it makes real model calls).
-
-MIT licensed. See `THIRD_PARTY_NOTICES.md`.
+Development: `npm ci`, `npm test`, `npm run snapshot`, `npm run perf`. Built on the Pi agent toolkit: your Pi logins,
+models, skills and extensions just work. MIT licensed.

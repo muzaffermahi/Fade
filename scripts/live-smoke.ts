@@ -30,10 +30,11 @@ async function main(): Promise<void> {
   const card = {
     title: 'Create hello.txt',
     state: 'ready' as const,
-    body: 'Create hello.txt containing hi. Done when: the file exists',
+    body: 'Create hello.txt containing the word hi.\nDone when: hello.txt exists and contains hi',
   };
-  const outcome = await builder.build(card, '', event => {
+  const outcome = await builder.build(card, 'The goal this card serves: prove Fade works end to end.', event => {
     if (event.type === 'action') console.log(`  ${event.text}`);
+    if (event.type === 'steps') console.log(`  steps: ${event.steps.map(s => `${s.status === 'done' ? '✓' : s.status === 'active' ? '◌' : '○'} ${s.text}`).join(' | ')}`);
   });
   console.log('outcome:', JSON.stringify(outcome));
   console.log('hello.txt exists:', existsSync(join(cwd, 'hello.txt')));

@@ -10,6 +10,10 @@ import {
 } from './pi.js';
 import { PiSlash } from './slash.js';
 
+// Local and small models often answer in prose instead of calling tools; then nothing gets built.
+const WEAK_TOOLS = 'The Builder model replied without using any tools, so nothing was built. ' +
+  'Builders need strong tool calling: switch with /model in this pane (a weaker model can still be a fine Companion).';
+
 const TOOL_NAMES = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'fade_steps', 'fade_done', 'fade_stuck'];
 
 export interface PiBuilderOptions {
@@ -28,6 +32,8 @@ export class PiBuilder implements BuilderAgent {
   private running = false;
   private streamed = '';
   private pendingNotes: string[] = [];
+  /** Tool calls in the current run; zero means the model only chatted. */
+  private toolCalls = 0;
 
   readonly slash: SlashHost;
 
@@ -149,6 +155,7 @@ export class PiBuilder implements BuilderAgent {
       this.streamed = '';
       if (text?.trim()) this.emit({ type: 'message', text });
     } else if (event.type === 'tool_execution_start') {
+      this.toolCalls += 1;
       const line = describeTool(this.opts.cwd, String(event.toolName), event.args);
       if (!String(event.toolName).startsWith('fade_')) this.emit({ type: 'action', text: line });
       this.emit({ type: 'log', line });
@@ -165,6 +172,7 @@ export class PiBuilder implements BuilderAgent {
     this.stopped = false;
     this.streamed = '';
     this.pendingNotes = [];
+    this.toolCalls = 0;
     this.running = true;
     try {
       await session.prompt(cardMessage(card, context));
@@ -172,6 +180,7 @@ export class PiBuilder implements BuilderAgent {
       if (this.outcome) return this.outcome;
       const runError = lastRunError(session.messages);
       if (runError) return { kind: 'failed', error: `Builder couldn't continue: ${runError}` };
+      if (this.toolCalls === 0) return { kind: 'failed', error: WEAK_TOOLS };
       return { kind: 'done', summary: session.getLastAssistantText() ?? 'Finished.', howToTry: '' };
     } catch (error) {
       if (this.stopped) return { kind: 'stopped' };
